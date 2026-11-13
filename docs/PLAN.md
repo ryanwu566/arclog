@@ -1,6 +1,147 @@
 # ArcLog 練投紀錄員：實作計畫
 
-> 這份文件在動工前寫好，之後照著做。每個階段結束時測試要全部通過才提交。
+## 目前進度（2026-11-14 暫停，尚未完成）
+
+**一句話**：階段 0 到 3（核心計算、網站、階段 A 模型）已完成並驗證；階段 4（訓練流程）的程式都寫好、單元測試通過；
+階段 5（合成資料從訓練到部署）只做到一半；階段 6（最後的整套實測、文件定稿、開 PR）還沒做。**PR 還沒開。**
+
+進度都在 `feat/arclog-mvp` 分支上，已推到遠端。最後一個程式提交是 `c9bc2fe`。
+
+### 已完成，而且驗證通過
+
+| 項目 | 怎麼驗證的 | 是在哪個狀態下驗證的 |
+|---|---|---|
+| 核心純函式（JS 和 Python），共用測試向量 | `npm test` 50 項、`python -m pytest` 73 項，全部通過。已知角度的合成軌跡（含雜訊）誤差 < 1 度；JS 和 Python 結果一致到 1e-6 | 目前的提交 `c9bc2fe` |
+| 逐幀定位（WebCodecs 和 `<video>` 兩個引擎 × 8 支條碼測試影片） | 瀏覽器實測 16 項通過 | `53d9579`（之後沒有改這部分，但也沒有重跑） |
+| 網站：示範模式半自動 → 報告、CSV 匯出再匯入、標註包、報告圖片、歷次紀錄、儲存失敗、手機版面 | 瀏覽器實測 10 項通過（10 球角度誤差平均 0.28 度、最大 0.53 度） | `53d9579`，之後有改動，**要重跑**（見下一節） |
+| 自動偵測：WebGPU 和 WASM 兩條路徑、取消、模型載入失敗時退回半自動 | 瀏覽器實測 10 項通過（示範影片 10 球全找到） | `53d9579`，之後有改動，**要重跑** |
+| 真的 MP4 影片：瀏覽器載入（WebCodecs）→ 校正 → 逐球標記 → 匯出標註包 → `build_dataset.py` 用時間戳對齊 → `check_overlay.py` | `tests/e2e/video.e2e.mjs` 第 1 項通過：標註和真值的球心平均差 0.46 像素（最大 0.92），負樣本確實沒有球 | 目前的提交 |
+| 重新整理後載入同一個檔案可以接續標記 | `tests/e2e/video.e2e.mjs` 第 2 項通過 | 目前的提交 |
+| 訓練工具接得起來（不含訓練本身）：`make_synth` → `build_dataset`（以影片為單位切分）→ `check_overlay` → `evaluate`（階段 A）→ `analyze` 的錯誤處理 | `tests/py/test_pipeline.py` 6 項通過 | 目前的提交 |
+| 時間戳對齊、以影片為單位切分、評估指標、「待實測」表格 | `tests/py/test_dataset.py` 21 項通過 | 目前的提交 |
+| 鏡頭擺位模擬；水平基準「修正透視」在鏡頭擺正時沒有偏差；規格裡的公式（偏 10 度 +0.4 度、偏 20 度 +1.8 度）成立 | `tests/js/camera.test.mjs` 9 項通過 | 目前的提交 |
+| 階段 B 的兩個公開資料集：授權、類別、影像數、版本、切分、前處理 | 2026-11-13 直接在 Roboflow 的資料集頁面上核對（記在 `docs/DATA.md`） | — |
+| 暫存區沒有影片、人像、權重、金鑰 | `python tools/check_staged.py` | 每次提交前 |
+
+### 寫好了，但還沒驗證（或只驗證到一半）
+
+1. **瀏覽器實測沒有在目前的狀態下完整重跑。** 上一次整套執行是在 `53d9579`：36 項裡 35 項通過；
+   剩下 1 項（「模型清單讀不到」）是測試在頁面還沒載入完就按按鈕造成的失敗，改了測試之後單獨重跑 3 次都通過，
+   但沒有再整套跑一次。之後又改了這些會影響瀏覽器實測的地方：
+   階段 A 模型的信心門檻 0.10 → 0.05、每幀最多保留的偵測數 8 → 12、實拍影片預設的水平基準改成「修正透視」
+   （示範模式仍用「籃框連線」）、自動偵測顯示的運算方式文字、測試用的 Python 改成優先用 `.venv`、
+   `auto.e2e.mjs` 裡一句比對模型說明文字的斷言。
+2. **`tests/e2e/video.e2e.mjs` 第 3 項**（網站的自動偵測和 `tools/analyze.py` 結果一致、`analyze.py` 的 CSV 可以匯入網站）：
+   跑過一次失敗，原因是測試步驟寫錯（按「全部接受」之後會回到標記頁，要再按「看報告」）。測試已經改了，**還沒重跑**。
+   所以「指令工具和網站結果一致」這件事目前**沒有驗證**。
+   （`analyze.py` 本身在一支 792 幀的合成影片上完整跑過一次，CSV 和檢查影片都有輸出；那次用的是舊的門檻 0.10，10 球找到 8 球。）
+3. **合成資料從訓練到部署（階段 5）只做到一半**：
+   - 做完的：6 支合成影片 → `build_dataset.py`（4／1／1 支，2,184 張有球、654 張負樣本）→ `check_overlay.py`（和真值平均差 1.71 像素）。
+   - 沒做完的：`train.py` 在 CPU 上跑完第 1 輪、第 2 輪跑到約六成時中止（每輪約 21 分鐘）。
+     所以 `train.py` 訓練結束之後的那一段程式、`export_onnx.py` 匯出單一類別模型、`evaluate.py` 比較兩個模型並寫進
+     `docs/EVAL.md`、網站載入新模型（`tests/e2e/pipeline.e2e.mjs`）**都還沒跑過**。
+4. **Colab notebook**（`training/arclog_train.ipynb`）：只做了靜態檢查（格式、每格程式前有中文說明、沒有金鑰）。
+   **還沒有實際執行過**，本機的 `python tests/run_notebook.py` 也還沒跑。Colab 上從來沒跑過；階段 B 下載資料的那一格沒有金鑰無法測試。
+5. **`training/prepare_public.py`**：只有兩個小函式有單元測試，沒有用真的 Roboflow 下載資料跑過。
+6. **軌跡邏輯的壓力測試**（`node tests/js/track-stress.mjs 200`）：`docs/EVAL.md` 4.1 引用的數字是在 `54ca160` 量的。
+   之後軌跡邏輯沒有改，但沒有重跑。
+7. **文件是初稿**：`README.md`、`docs/SHOOTING_GUIDE.md`、`docs/DATA.md`、`docs/EVAL.md`、`docs/NEXT_STEPS.md`、`models/MODEL_CARD.md`
+   都寫了，內容已經對照過目前的實際狀況（沒做完的地方有寫明），但還沒有最後通讀一次；`NEXT_STEPS.md` 提到的 PR 還不存在；
+   這份文件第 4 節各階段的勾選框還沒更新。
+8. **iPhone／Safari**：開發環境是 Windows，沒有實機，無法驗證。這一項最後會寫在 PR 說明裡請你實測。
+
+### 還沒做
+
+- 把上面第 1 到 6 項跑完、修到通過。
+- `docs/EVAL.md` 第 2 節的合成資料結果表（由 `evaluate.py --write-doc` 產生）。
+- 更新這份文件第 4 節的勾選框；文件最後通讀。
+- 最後一次檢查暫存區、提交、推上遠端、**開 PR 到 `main`**（說明裡列出：已驗證的項目和方式、沒有驗證或只用合成資料驗證的項目、自動偵測可能失效的條件、需要你接手的步驟）。
+
+### 和原本規格不同、需要你知道的地方
+
+- **水平基準改了**（細節在 2.5）。模擬發現「直接用籃框兩點連線當水平」即使鏡頭擺得完全正也會高估 0.3 到 2.6 度，
+  所以實拍影片的預設改成「籃框連線並修正透視」。
+- **拍攝位置的建議比「罰球線正側面」多了兩點**（`docs/SHOOTING_GUIDE.md`）：腳架放在出手點和籃框的**中間**，
+  而且手機**不要往上仰、不要轉向籃框**。站在罰球線側面再把鏡頭轉向場中，模擬中會高估 0.6 到 3 度。
+  規格裡的公式和兩個數字照樣寫進去了，並用模擬驗證過（相機很遠時成立；實際距離還多一項透視效應）。
+- 這些數字全部來自幾何模擬，不是實拍量測。
+
+### 明天從這裡接著做（照順序）
+
+指令在 PowerShell 裡一行一個。先進專案資料夾並啟用虛擬環境：
+
+```powershell
+cd C:\Projects\arclog
+```
+
+```powershell
+.\.venv\Scripts\Activate.ps1
+```
+
+1. **確認起點是好的**（兩個都應該全部通過，共約 3 分鐘）：
+
+   ```powershell
+   npm test
+   ```
+
+   ```powershell
+   python -m pytest
+   ```
+
+2. **重跑瀏覽器實測，修到通過**（約 10 分鐘；`pipeline.e2e.mjs` 在模型還沒訓練出來時會自動跳過）。
+   先單獨跑昨天沒跑完的那一支，再跑整套：
+
+   ```powershell
+   node --test --test-concurrency=1 --test-reporter=spec tests/e2e/video.e2e.mjs
+   ```
+
+   ```powershell
+   npm run test:e2e
+   ```
+
+3. **把合成資料的訓練到部署跑完**。`data/synth`（6 支合成影片）和 `data/dataset_synth` 還留在這台電腦上（不進版控）；
+   如果不見了，照 `docs/EVAL.md` 第 2 節的前三個指令重新產生。訓練在這台電腦的 CPU 上約 65 分鐘（3 輪）：
+
+   ```powershell
+   python training/train.py --stage synthetic --data data/dataset_synth/data.yaml --epochs 3 --workers 4
+   ```
+
+   ```powershell
+   python training/export_onnx.py --weights runs/arclog/synthetic/weights/best.pt --id arclog-ball-synth --stage synthetic --out-dir data/models_synth
+   ```
+
+   ```powershell
+   python training/evaluate.py --dataset data/dataset_synth --truth data/synth --section synthetic --models arclog-ball-a-coco,data/models_synth/arclog-ball-synth.onnx --write-doc
+   ```
+
+   ```powershell
+   node --test --test-concurrency=1 --test-reporter=spec tests/e2e/pipeline.e2e.mjs
+   ```
+
+4. **在本機把 notebook 從頭到尾執行一次**（synthetic 模式，約 10 分鐘。它會覆蓋 `runs/arclog/synthetic`，所以排在第 3 步之後）：
+
+   ```powershell
+   python tests/run_notebook.py
+   ```
+
+5. **重跑軌跡邏輯的壓力測試**，確認 `docs/EVAL.md` 4.1 的數字：
+
+   ```powershell
+   node tests/js/track-stress.mjs 200
+   ```
+
+6. **文件定稿**：`docs/EVAL.md` 第 2 節（第 3 步會自動寫入表格，再把前後文字改成「已完成」）、`README.md` 裡「只做到一半」那一句、
+   `docs/NEXT_STEPS.md` 最上面的提醒、`models/MODEL_CARD.md`、這份文件第 4 節的勾選框，然後刪掉這一整節「目前進度」。
+
+7. **收尾**：`python tools/check_staged.py` → 提交 → 推上遠端 → 開 PR 到 `main`。
+
+只存在這台電腦上、沒有進版控的東西（換電腦或清掉 `data/` 的話要重新產生）：`data/synth`、`data/dataset_synth`、
+`runs/arclog/synthetic`（中止時留下的第 1 輪權重，不能當結果用）、`data/scratch/make_nb.py`（產生 notebook 的小工具；
+沒有它的話直接編輯 `.ipynb` 即可）。
+
+---
+
+> 以下是動工前寫好的計畫，之後照著做。每個階段結束時測試要全部通過才提交。
 > 最後的實際結果（哪些驗證過、哪些沒有）寫在 PR 說明和 `docs/EVAL.md`，不會回頭把這裡改成「都完成了」。
 
 ## 1. 要做什麼
