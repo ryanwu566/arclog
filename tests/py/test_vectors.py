@@ -91,7 +91,7 @@ def test_entry_angle_within_one_degree_and_matches_js():
         err = abs(res["angleRaw"] - c["truth"]["angleDeg"])
         worst = max(worst, err)
         assert err < c["tolDeg"] <= 1.0, f"{c['name']}: 誤差 {err:.3f} 度"
-        assert res["made"] == c["truth"]["made"], c["name"]
+        assert res["made"] == (c["truth"]["zone"] in ("clean", "rim")), c["name"]
         assert_close(res, c["expected"], TOL, c["name"])
     assert len(v["cases"]) >= 60
     assert worst < 1.0

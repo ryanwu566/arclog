@@ -1,0 +1,37 @@
+{
+ "width": 1280,
+ "height": 720,
+ "ballDiameterPx": 36,
+ "hoop": {
+  "front": {
+   "x": 940.8,
+   "y": 217.50000000000006
+  },
+  "back": {
+   "x": 1008.3,
+   "y": 217.50000000000006
+  }
+ },
+ "frames": {
+  "synth_apex.png": {
+   "frame": 38,
+   "ball": {
+    "x": 696,
+    "y": 67,
+    "phase": "flight"
+   }
+  },
+  "synth_late.png": {
+   "frame": 48,
+   "ball": {
+    "x": 886.3,
+    "y": 128.3,
+    "phase": "flight"
+   }
+  },
+  "synth_empty.png": {
+   "frame": 3,
+   "ball": null
+  }
+ }
+}

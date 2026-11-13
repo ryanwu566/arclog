@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "default": "arclog-ball-a-coco",
+  "models": [
+    {
+      "id": "arclog-ball-a-coco",
+      "file": "arclog-ball-a-coco.onnx",
+      "label": "階段 A：COCO 預訓練（sports ball 類別）",
+      "stage": "A",
+      "base": "YOLO26n",
+      "input": {
+        "width": 640,
+        "height": 384
+      },
+      "output": [
+        1,
+        84,
+        5040
+      ],
+      "classIndex": 32,
+      "className": "sports ball",
+      "numClasses": 80,
+      "conf": 0.1,
+      "ultralytics": "8.4.211",
+      "exported": "2026-11-13",
+      "bytes": 9863070,
+      "sha256": "60cea7b01d62713d2415f143410ff6e5623b042e7a0f9e7d79f297ee6b2e1428",
+      "data": "COCO 2017（Ultralytics 官方預訓練權重，未另外訓練）",
+      "note": "直接使用 COCO 的 sports ball 類別。對小顆、模糊的飛行球偵測率未經實拍驗證。",
+      "license": "AGPL-3.0"
+    }
+  ]
+}

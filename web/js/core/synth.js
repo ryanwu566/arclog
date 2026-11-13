@@ -160,22 +160,35 @@ function firstContact(flight) {
   return null;
 }
 
-/** 從某個狀態開始模擬碰撞、球網、落地，回傳每 SIM_DT 一筆的狀態。 */
+/**
+ * 從某個狀態開始模擬碰撞、球網、落地。
+ * @returns {{states:number[][], made:boolean}} states 每 SIM_DT 一筆；
+ *          made = 球有沒有由上往下穿過籃框並掉進球網
+ */
 function simulateAfter(start, duration, k) {
-  const out = [start.slice()];
+  const states = [start.slice()];
   let st = start.slice();
+  // 球心由上往下通過籃框平面、而且在前後緣之間，才算進了框（球網也才會作用在球上）
+  let entered = start[1] <= 1e-9 && start[1] > -0.05 && start[3] < 0 && start[0] > 0 && start[0] < RIM_DIAMETER_M;
+  let made = false;
   const steps = Math.ceil(duration / SIM_DT);
   for (let i = 0; i < steps; i++) {
+    const prevY = st[1];
     st = rk4(st, SIM_DT, k);
-    if (inNet(st)) {
-      const damp = 1 - 7 * SIM_DT;
+    if (!entered && prevY > 0 && st[1] <= 0 && st[0] > 0 && st[0] < RIM_DIAMETER_M) entered = true;
+    if (entered && inNet(st)) {
+      // 球網：把球往網子中間帶，並把速度拖慢
+      st[0] += (RIM_DIAMETER_M / 2 - st[0]) * Math.min(1, 16 * SIM_DT);
       st[2] *= 1 - 25 * SIM_DT;
-      st[3] *= damp;
+      st[3] *= 1 - 7 * SIM_DT;
+      if (st[1] < -0.3) made = true;
     }
     collide(st);
-    out.push(st.slice());
+    // 進框後又彈出來（很少見）就不算
+    if (entered && !made && st[1] > 0.05) entered = false;
+    states.push(st.slice());
   }
-  return out;
+  return { states, made };
 }
 
 // ── 示範劇本 ────────────────────────────────────────────────────────────────
@@ -203,7 +216,8 @@ const DEMO_SHOTS = [
  * @param {number} [opts.fps=30]
  * @param {number} [opts.width=1280]
  * @param {number} [opts.height=720]
- * @param {number} [opts.pxPerM=160]
+ * @param {number} [opts.pxPerM=150]
+ * @param {number} [opts.floorMarginM=0.3] 地板線以下還看得到多少（公尺）
  * @param {boolean} [opts.mirror=false] true = 投籃者在畫面右邊
  * @param {number} [opts.rollDeg=0] 相機歪斜角度（測試用）
  * @param {number} [opts.dragK] 預設用 DRAG_K_PER_M；0 = 純拋物線
@@ -216,7 +230,8 @@ export function makeDemoPlan(opts = {}) {
     fps: 30,
     width: 1280,
     height: 720,
-    pxPerM: 160,
+    pxPerM: 150,
+    floorMarginM: 0.3,
     mirror: false,
     rollDeg: 0,
     hold: 0.4,
@@ -257,24 +272,32 @@ export function makeDemoPlan(opts = {}) {
       s = lo + rng() * (0.69 - lo);
     } else if (sc.kind === 'short') s = -0.38 + rng() * 0.3;
     else s = 1.08 + rng() * 0.22;
-    const releaseX = sc.releaseX != null ? sc.releaseX : -(3.75 + rng() * 0.35);
-    const releaseY = sc.releaseY != null ? sc.releaseY : -(0.72 + rng() * 0.2);
-    const flight = designFlight({
-      angleDeg: sc.angle,
-      crossX: s * RIM_DIAMETER_M,
-      releaseX,
-      releaseY,
-      dragK,
-    });
+    // 出手點：投籃者站在固定位置，每球只有一點點差異
+    const releaseX = sc.releaseX != null ? sc.releaseX : -(3.88 + rng() * 0.1);
+    const releaseY = sc.releaseY != null ? sc.releaseY : -(0.76 + rng() * 0.12);
+    // 進球與否以碰撞模擬的結果為準（畫面上看到什麼就是什麼）。
+    // 劇本想要「沒進」但模擬結果彈進去了，就把落點再往外挪一點重試。
+    let flight = null;
+    let handover = 0;
+    let sim = null;
+    for (let attempt = 0; attempt < 8; attempt++) {
+      flight = designFlight({ angleDeg: sc.angle, crossX: s * RIM_DIAMETER_M, releaseX, releaseY, dragK });
+      if (!flight) break;
+      const contact = firstContact(flight);
+      handover = contact != null ? contact : flight.T;
+      sim = simulateAfter(flightState(flight, handover), o.post + o.fade, dragK);
+      if (sc.s != null || sim.made === (sc.kind === 'make')) break;
+      if (sc.kind === 'short') s -= 0.08;
+      else if (sc.kind === 'long') s += 0.08;
+      else s += (0.56 - s) * 0.5;
+    }
     if (!flight) continue;
-    const contact = sc.kind === 'make' ? null : firstContact(flight);
-    const handover = contact != null ? contact : flight.T;
-    const after = simulateAfter(flightState(flight, handover), o.post + o.fade, dragK);
+    const after = sim.states;
     const tRelease = t + o.hold;
     shots.push({
       index: i,
       kind: sc.kind,
-      made: sc.kind === 'make',
+      made: sim.made,
       angleDeg: sc.angle, // 真實入框角度（未受碰撞影響的軌跡在籃框平面的切線）
       crossS: s,
       flight,
@@ -295,7 +318,7 @@ export function makeDemoPlan(opts = {}) {
   // 籃框前緣在畫面上的位置：讓整條拋物線和地板都入鏡
   const originPx = {
     x: o.mirror ? o.width - (o.width * 0.735) : o.width * 0.735,
-    y: o.height - (RIM_HEIGHT_M + 0.06) * o.pxPerM,
+    y: o.height - (RIM_HEIGHT_M + o.floorMarginM) * o.pxPerM,
   };
   const roll = (o.rollDeg * Math.PI) / 180;
   return {

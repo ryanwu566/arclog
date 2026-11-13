@@ -160,7 +160,14 @@ function oneShotPlan(o) {
     const dragK = o.fitDragK ?? (o.truthDragK === 0 ? 0 : C.DRAG_K_RIM);
     const hoop = makeHoopFrame(front, back, { level });
     const res = analyzeShot(points.map((p) => { const [u, v] = toHoop(hoop, p.x, p.y); return { u, v, t: p.t }; }), { dragK });
-    const truth = { angleDeg: plan.shots[0].angleDeg, crossS: plan.shots[0].crossS, made: plan.shots[0].made };
+    // zone：把「真實的過框位置和角度」代進幾何判定得到的分區（手點流程只能做到幾何判定）。
+    // simMade：碰撞模擬裡球最後有沒有進（碰框後彈進去的球，幾何判定猜不到，所以只記錄不比對）。
+    const truth = {
+      angleDeg: plan.shots[0].angleDeg,
+      crossS: plan.shots[0].crossS,
+      zone: judgeMake(plan.shots[0].crossS, plan.shots[0].angleDeg).zone,
+      simMade: plan.shots[0].made,
+    };
     const tol = o.tol ?? 1.0;
     const err = res.ok ? res.angleRaw - truth.angleDeg : NaN;
     report.push({ file: 'angle', name: o.name, err, tol });

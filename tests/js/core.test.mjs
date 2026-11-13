@@ -98,7 +98,9 @@ test('入框角度：已知角度的合成軌跡，誤差在門檻內', () => {
     worst = Math.max(worst, err);
     assert.ok(err < c.tolDeg, `${c.name}：誤差 ${err.toFixed(3)} 度，門檻 ${c.tolDeg}`);
     assert.ok(c.tolDeg <= 1.0, '門檻不可以放寬到 1 度以上');
-    assert.equal(res.made, c.truth.made, `${c.name} 的進球建議`);
+    // 幾何判定的進球建議要和「用真實過框位置算出來的」一致
+    // （空心區和可能碰框區的交界附近，雜訊會讓分區互換，所以比的是建議進球與否）
+    assert.equal(res.made, c.truth.zone === 'clean' || c.truth.zone === 'rim', `${c.name} 的進球建議`);
     assert.ok(Math.abs(res.crossS - c.truth.crossS) < 0.15, `${c.name} 的過框位置`);
     assertClose(
       { angleRaw: res.angleRaw, angleDeg: res.angleDeg, crossS: res.crossS, made: res.made, zone: res.zone, flip: res.flip, model: res.model, parabola: res.parabola, apex: res.apex, rms: res.rms, monotonic: res.monotonic },

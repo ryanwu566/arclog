@@ -3,7 +3,8 @@
 //
 // 流程：
 //   1. 去掉靜止的偵測（放在地上的球、被誤認成球的固定物體）。
-//   2. 找出「比籃框高」的偵測，依時間分群；每一群前後各留一段時間當作搜尋視窗。
+//   2. 找出「比籃框高」的偵測，依時間分群；每一群前後各留一段時間當作搜尋範圍，
+//      範圍太長時切成固定長度的小視窗滑過去。
 //   3. 視窗內用 RANSAC 找符合拋物線的一組點；條件是最高點高於籃框、下降時靠近籃框、
 //      入框角度在合理範圍、而且是朝籃框飛來。這一步會濾掉運球、傳球、彈框後的球和場上其他球。
 //   4. 只留「過框前的自由飛行段」重新擬合（含空氣阻力修正），算入框角度。
@@ -30,11 +31,16 @@ export const TRACK_DEFAULTS = {
   clusterGap: 0.6,
   windowBefore: 1.2,
   windowAfter: 0.4,
+  // 一段很長的視窗（假偵測多的時候會連成一片）切成固定長度的小視窗滑過去找，
+  // 不然裡面有好幾球時 RANSAC 很難剛好抽到同一球的三個點
+  subWindow: 3.0,
+  subStep: 1.0,
+  edgeMargin: 0.12,
   // RANSAC
   thresh: 0.15,
   timeTol: 1.0,
   iters: 600,
-  maxArcsPerWindow: 4,
+  maxArcsPerWindow: 6,
   // 軌跡成立條件
   minInliers: 5,
   // 點要沿著軌跡分散：把水平位置每半個框分成一格，至少要佔 5 格。
@@ -53,6 +59,10 @@ export const TRACK_DEFAULTS = {
   minDescending: 1,
   preCrossCut: 0.3, // 過框點之前約一個球半徑以內的點不拿來擬合
   freeFlightMaxU: 0.9, // 再往後球已經碰得到後緣或籃板
+  backtrackTol: 0.1, // 水平位置倒退超過這麼多的點，是碰框後彈回來的球
+  // 出手前球還在手上（或投籃前運球）、以及碰框後彈起來的球，位置常常剛好落在軌跡的延長線上，
+  // 但時間對不上：飛行中的球水平等速。由軌跡中段的點往前、往後一個一個核對。
+  chainTol: 0.3,
   residSigmas: 3, // 殘差超過 3 倍穩健標準差的點視為混進來的別顆球
   residFloor: 0.03,
   // 頭尾一兩個點如果和其他點隔了一大段時間，多半是碰巧落在延長線上的別顆球
@@ -108,7 +118,9 @@ export function markStatic(dets, ballDiameterPx, o = TRACK_DEFAULTS) {
  *        f 幀號、t 時間（秒）、x y 球心（像素）
  * @param {object} hoop makeHoopFrame 的結果
  * @param {object} [opts] 覆寫 TRACK_DEFAULTS
- * @returns {{shots:object[], stats:{detections:number, usable:number, static:number, windows:number}}}
+ * @returns {{shots:object[], stats:{detections:number, usable:number, static:number, windows:number,
+ *            candidates:number, rejected:Object<string, number>}}}
+ *          stats.rejected 記錄被排除的候選軌跡各是卡在哪一個條件，調參數或除錯時用
  */
 export function findShots(detections, hoop, opts = {}) {
   const o = { ...TRACK_DEFAULTS, ...opts };
@@ -131,7 +143,7 @@ export function findShots(detections, hoop, opts = {}) {
     }
     const d = sized[m];
     const [u, v] = toHoop(hoop, d.x, d.y);
-    pts.push({ u, v, t: d.t, f: d.f, x: d.x, y: d.y, conf: d.conf, used: false });
+    pts.push({ u, v, t: d.t, f: d.f, x: d.x, y: d.y, conf: d.conf, used: false, skip: -1 });
   }
 
   // 2. 比籃框高的偵測依時間分群
@@ -146,34 +158,58 @@ export function findShots(detections, hoop, opts = {}) {
     }
   }
 
-  // 3. 每個視窗找軌跡
+  // 3. 每個搜尋範圍用小視窗滑過去找軌跡
   const shots = [];
+  const rejected = {};
+  let candidates = 0;
+  let calls = 0;
+  let stamp = 0;
+  let lo = 0;
   for (let w = 0; w < windows.length; w++) {
     const t0 = windows[w].t0 - o.windowBefore;
     const t1 = windows[w].t1 + o.windowAfter;
-    for (let round = 0; round < o.maxArcsPerWindow; round++) {
-      const cand = pts.filter((p) => !p.used && p.t >= t0 && p.t <= t1);
-      const arc = ransacArc(cand, {
-        seed: o.seed + w * 31 + round,
-        iters: o.iters,
-        thresh: o.thresh,
-        timeTol: o.timeTol,
-        minInliers: o.minInliers,
-        minApex: o.minApex,
-        maxApex: o.maxApex,
-        sMin: o.sMin,
-        sMax: o.sMax,
-        minSlope: o.minSlope,
-        maxSlope: o.maxSlope,
-        minApproach: o.minApproach,
-      });
-      if (!arc) break;
-      const inl = arc.inliers.map((m) => cand[m]);
-      const shot = buildShot(inl, pts, o);
-      // 不管成不成立，這些點都不再重複使用
-      for (const p of inl) p.used = true;
-      if (shot) shots.push(shot);
+    for (let a = t0; ; a += o.subStep) {
+      const b = Math.min(t1, a + o.subWindow);
+      stamp++;
+      while (lo < pts.length && pts[lo].t < a) lo++;
+      for (let round = 0; round < o.maxArcsPerWindow; round++) {
+        const cand = [];
+        for (let m = lo; m < pts.length && pts[m].t <= b; m++) {
+          if (!pts[m].used && pts[m].skip !== stamp) cand.push(pts[m]);
+        }
+        const arc = ransacArc(cand, {
+          seed: o.seed + calls,
+          iters: o.iters,
+          thresh: o.thresh,
+          timeTol: o.timeTol,
+          minInliers: o.minInliers,
+          minApex: o.minApex,
+          maxApex: o.maxApex,
+          sMin: o.sMin,
+          sMax: o.sMax,
+          minSlope: o.minSlope,
+          maxSlope: o.maxSlope,
+          minApproach: o.minApproach,
+        });
+        calls++;
+        if (!arc) break;
+        const inl = arc.inliers.map((m) => cand[m]);
+        // 球還在飛就碰到小視窗的尾端：這一輪先跳過這些點，留給下一個小視窗（那裡看得到整條軌跡）
+        if (b < t1 && inl[inl.length - 1].t > b - o.edgeMargin) {
+          for (const p of inl) p.skip = stamp;
+          continue;
+        }
+        const built = buildShot(inl, pts, o);
+        candidates++;
+        // 不管成不成立，這些點都不再重複使用
+        for (const p of inl) p.used = true;
+        if (built.shot) shots.push(built.shot);
+        else rejected[built.reason] = (rejected[built.reason] || 0) + 1;
+      }
+      if (b >= t1) break;
     }
+    // 下一個範圍可能和這個重疊，指標退回去重新找起點
+    lo = 0;
   }
 
   // 同一球被兩個視窗各抓到一次時，留點數多的
@@ -197,6 +233,8 @@ export function findShots(detections, hoop, opts = {}) {
   if (forward > 0 && backward > 0) {
     if (backward * o.directionRatio <= forward) merged = merged.filter((s) => !s.flip);
     else if (forward * o.directionRatio <= backward) merged = merged.filter((s) => s.flip);
+    const dropped = forward + backward - merged.length;
+    if (dropped) rejected.wrong_direction = dropped;
   }
 
   return {
@@ -206,6 +244,8 @@ export function findShots(detections, hoop, opts = {}) {
       usable: pts.length,
       static: staticCount,
       windows: windows.length,
+      candidates,
+      rejected,
     },
   };
 }
@@ -236,6 +276,35 @@ function trimEnds(pts, o) {
   return start === 0 && end === n ? pts : pts.slice(start, end);
 }
 
+/**
+ * 時間核對：由軌跡中段的三個點開始（那裡最不可能混進別的東西），
+ * 往更早、再往更晚一個一個看：水平位置要和「已接受的點的等速直線」對得上，對不上的丟掉。
+ */
+function chainFilter(pts, o) {
+  const n = pts.length;
+  if (n < 5) return pts;
+  const mid = n >> 1;
+  const acc = [mid - 1, mid, mid + 1];
+  const fit = () =>
+    fitLine(
+      acc.map((i) => pts[i].t),
+      acc.map((i) => pts[i].u),
+    );
+  let line = fit();
+  if (!line) return pts;
+  const consider = (i) => {
+    if (Math.abs(pts[i].u - (line.p + line.q * pts[i].t)) > o.chainTol) return;
+    acc.push(i);
+    const next = fit();
+    if (next) line = next;
+  };
+  for (let i = mid - 2; i >= 0; i--) consider(i);
+  for (let i = mid + 2; i < n; i++) consider(i);
+  if (acc.length === n) return pts;
+  acc.sort((a, b) => a - b);
+  return acc.map((i) => pts[i]);
+}
+
 function buildShot(inl, pts, o) {
   // 4. 只留過框前的自由飛行段，並去掉殘差特別大的點（混進來的別顆球），重新擬合。
   //    過框點和殘差都會跟著變，所以最多做幾輪。
@@ -243,22 +312,32 @@ function buildShot(inl, pts, o) {
   let res;
   for (let pass = 0; ; pass++) {
     kept = trimEnds(kept, o);
-    if (kept.length < o.minInliers) return null;
+    if (kept.length < o.minInliers) return { reason: 'few_points' };
     res = analyzeShot(
       kept.map((p) => ({ u: p.u, v: p.v, t: p.t })),
       { dragK: o.dragK },
     );
-    if (!res.ok) return null;
+    if (!res.ok) return { reason: 'fit_failed' };
     if (pass >= 4) break;
     const Us = kept.map((p) => (res.flip ? 1 - p.u : p.u));
     const fitted = evalArc(res.model, Us);
     const absRes = kept.map((p, i) => Math.abs(p.v - fitted[i]));
     const residLimit = Math.max(o.residSigmas * 1.4826 * median(absRes), o.residFloor);
     const cutU = Math.min(res.crossS - o.preCrossCut, o.freeFlightMaxU);
-    const next = trimEnds(
-      kept.filter((p, i) => Us[i] <= cutU && absRes[i] <= residLimit),
-      o,
-    );
+    // 依時間順序走：球第一次進到框附近之後的點全部不要（之後可能已經碰框）；
+    // 殘差太大、或水平位置倒退的點也不要。
+    const keep = [];
+    let runMax = -Infinity;
+    let reached = false;
+    for (let i = 0; i < kept.length; i++) {
+      if (Us[i] > cutU) reached = true;
+      if (reached) continue;
+      if (absRes[i] > residLimit) continue;
+      if (Us[i] < runMax - o.backtrackTol) continue;
+      if (Us[i] > runMax) runMax = Us[i];
+      keep.push(kept[i]);
+    }
+    const next = trimEnds(chainFilter(keep, o), o);
     if (next.length === kept.length) break;
     kept = next;
   }
@@ -266,10 +345,10 @@ function buildShot(inl, pts, o) {
   const n = kept.length;
   const tFirst = kept[0].t;
   const tLast = kept[n - 1].t;
-  if (!(tLast - tFirst >= o.minDuration)) return null;
+  if (!(tLast - tFirst >= o.minDuration)) return { reason: 'short_duration' };
   // 水平跨距不看最兩端各一個點：只靠一個碰巧落在線上的假偵測撐起來的軌跡不算
   const us = kept.map((p) => p.u).sort((a, b) => a - b);
-  if (!(us[n - 2] - us[1] >= o.minSpanU)) return null;
+  if (!(us[n - 2] - us[1] >= o.minSpanU)) return { reason: 'short_span' };
   let bins = 1;
   let lastBin = Math.floor(us[0] / o.binWidth);
   for (let i = 1; i < n; i++) {
@@ -279,28 +358,28 @@ function buildShot(inl, pts, o) {
       lastBin = b;
     }
   }
-  if (bins < o.minBins) return null;
-  if (!(res.model.slope >= o.minSlope && res.model.slope <= o.maxSlope)) return null;
-  if (!(res.apex.v >= o.minApex && res.apex.v <= o.maxApex)) return null;
-  if (!(res.crossS >= o.sMin && res.crossS <= o.sMax)) return null;
-  if (!(res.rms <= o.maxRms)) return null;
+  if (bins < o.minBins) return { reason: 'few_bins' };
+  if (!(res.model.slope >= o.minSlope && res.model.slope <= o.maxSlope)) return { reason: 'angle_range' };
+  if (!(res.apex.v >= o.minApex && res.apex.v <= o.maxApex)) return { reason: 'apex_range' };
+  if (!(res.crossS >= o.sMin && res.crossS <= o.sMax)) return { reason: 'cross_range' };
+  if (!(res.rms <= o.maxRms)) return { reason: 'rms' };
   // 「朝籃框飛來」同樣不看最早的那一個點
   const startU = res.flip ? 1 - kept[1].u : kept[1].u;
-  if (!(Math.abs(startU - 0.5) - Math.abs(res.crossS - 0.5) >= o.minApproach)) return null;
+  if (!(Math.abs(startU - 0.5) - Math.abs(res.crossS - 0.5) >= o.minApproach)) return { reason: 'not_approaching' };
   // 至少要有幾個點在最高點之後（下降段），角度才有根據
   let descending = 0;
   for (const p of kept) {
     const U = res.flip ? 1 - p.u : p.u;
     if (U > res.apex.u) descending++;
   }
-  if (descending < o.minDescending) return null;
+  if (descending < o.minDescending) return { reason: 'no_descent' };
 
   // 過框時間：水平位置對時間的直線，解出到達過框點的時間
   const line = fitLine(
     kept.map((p) => p.t),
     kept.map((p) => p.u),
   );
-  if (!line || !(Math.abs(line.q) > 1e-9)) return null;
+  if (!line || !(Math.abs(line.q) > 1e-9)) return { reason: 'time_fit' };
   const ucU = res.flip ? 1 - res.crossS : res.crossS;
   const tCross = (ucU - line.p) / line.q;
 
@@ -346,7 +425,7 @@ function buildShot(inl, pts, o) {
     }
   }
 
-  return {
+  const shot = {
     angle: roundAngle(res.angleRaw),
     angleRaw: res.angleRaw,
     crossS: res.crossS,
@@ -368,4 +447,5 @@ function buildShot(inl, pts, o) {
     evidence: { net, above },
     points: kept.map((p) => ({ f: p.f, t: p.t, x: p.x, y: p.y, conf: p.conf })),
   };
+  return { shot };
 }
