@@ -1,0 +1,9 @@
+# 跑測試需要的套件。
+#
+#   python -m pip install -r requirements.txt -r requirements-dev.txt
+#   python -m pytest
+#
+pytest>=8.0
+nbformat>=5.10     # 檢查並在本機執行 Colab notebook
+nbclient>=0.10
+ipykernel>=6.29

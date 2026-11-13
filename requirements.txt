@@ -1,0 +1,9 @@
+# tools/analyze.py 和 arclog/ 程式庫需要的套件（分析影片、輸出 CSV 和檢查影片）。
+# 訓練另外需要 training/requirements.txt。
+#
+#   python -m pip install -r requirements.txt
+#
+numpy>=2.0
+pillow>=10.0
+av>=14.0            # PyAV：讀寫影片、取得每一幀的時間戳（內含 FFmpeg，不必另外安裝）
+onnxruntime>=1.20   # 跑 models/ 裡的 ONNX 模型

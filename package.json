@@ -1,0 +1,21 @@
+{
+  "name": "arclog",
+  "version": "0.1.0",
+  "private": true,
+  "description": "ArcLog 練投紀錄員：手機側拍練投，算出每一球的入框角度和進球與否。網站本身不需要 npm；這個檔案只給開發測試和產生合成資料用。",
+  "license": "AGPL-3.0-only",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "node --test tests/js/*.test.mjs",
+    "vectors": "node tests/gen_vectors.mjs",
+    "serve": "python tools/serve.py",
+    "test:e2e": "node tests/e2e/run.mjs"
+  },
+  "devDependencies": {
+    "@napi-rs/canvas": "1.1.1",
+    "playwright-core": "1.65.0"
+  }
+}

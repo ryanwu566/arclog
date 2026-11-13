@@ -1,0 +1,10 @@
+# 訓練、評估、匯出模型需要的套件。Colab notebook 會自動安裝。
+#
+#   python -m pip install -r requirements.txt
+#   python -m pip install -r training/requirements.txt
+#
+# 這份計畫實際驗證過的版本：ultralytics 8.4.211、torch 2.15.0、onnx 1.23.2、onnxruntime 1.32.0。
+ultralytics>=8.4.211,<9
+onnx>=1.17
+onnxslim>=0.1.80
+roboflow>=1.7       # 只有階段 B 下載公開資料集時需要
