@@ -12,7 +12,8 @@
     "test": "node --test tests/js/*.test.mjs",
     "vectors": "node tests/gen_vectors.mjs",
     "serve": "python tools/serve.py",
-    "test:e2e": "node tests/e2e/run.mjs"
+    "test:e2e": "node --test --test-concurrency=1 tests/e2e/*.e2e.mjs",
+    "test:all": "npm test && npm run test:e2e"
   },
   "devDependencies": {
     "@napi-rs/canvas": "1.1.1",
