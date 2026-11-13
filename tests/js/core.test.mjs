@@ -51,7 +51,7 @@ test('亂數產生器可重現', () => {
 
 test('籃框座標系', () => {
   for (const c of vectors('geometry.json').cases) {
-    const frame = makeHoopFrame(c.front, c.back, { level: c.level });
+    const frame = makeHoopFrame(c.front, c.back, { level: c.level, width: c.width, height: c.height, focal: c.focal });
     if (c.frame === null) {
       assert.equal(frame, null);
       continue;

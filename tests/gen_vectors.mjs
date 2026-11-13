@@ -83,11 +83,16 @@ save('prng.json', {
     { front: { x: 900, y: 240 }, back: { x: 1034.2, y: 233.1 }, level: 'image' },
     { front: { x: 400, y: 300.5 }, back: { x: 268.25, y: 306.75 }, level: 'rim' }, // 投籃者在右邊
     { front: { x: 400, y: 300.5 }, back: { x: 268.25, y: 306.75 }, level: 'image' },
+    // 修正透視：籃框在畫面右上、左上（投籃者在右邊）、直拍並指定焦距、沒給畫面大小（→ 當成 rim）
+    { front: { x: 1403.5, y: 412 }, back: { x: 1538.2, y: 405.1 }, level: 'persp', width: 1920, height: 1080 },
+    { front: { x: 400, y: 300.5 }, back: { x: 268.25, y: 306.75 }, level: 'persp', width: 1280, height: 720 },
+    { front: { x: 700, y: 900 }, back: { x: 815, y: 893 }, level: 'persp', width: 1080, height: 1920, focal: 0.72 },
+    { front: { x: 900, y: 240 }, back: { x: 1034.2, y: 233.1 }, level: 'persp' },
     { front: { x: 10, y: 10 }, back: { x: 10, y: 10 }, level: 'rim' }, // 兩點重合 → null
     { front: { x: 10, y: 10 }, back: { x: 10, y: 80 }, level: 'image' }, // 垂直線配 image → null
   ];
   for (const d of defs) {
-    const frame = makeHoopFrame(d.front, d.back, { level: d.level });
+    const frame = makeHoopFrame(d.front, d.back, { level: d.level, width: d.width, height: d.height, focal: d.focal });
     const pts = frame
       ? [[d.front.x, d.front.y], [d.back.x, d.back.y], [123.4, 567.8], [1000, 50], [640, 360]].map(([x, y]) => {
           const [u, v] = toHoop(frame, x, y);
@@ -113,7 +118,7 @@ save('prng.json', {
   // 人工核對過的案例（不是由程式產生的預期值）
   const hand = [
     { s: 0.5, angle: 45, made: true, zone: 'clean', why: '正中、45 度：前緣餘裕 0.354、後緣 0.5，都大於球半徑 0.267' },
-    { s: 0.61, angle: 45, made: true, zone: 'clean', why: 'Noah 所說「過中心 5 公分」的位置' },
+    { s: 0.61, angle: 45, made: true, zone: 'clean', why: '常被引用的理想落點：過籃框中心大約 5 公分' },
     { s: 0.3, angle: 45, made: true, zone: 'rim', why: '前緣餘裕 0.212，介於 0.6R=0.16 和 R=0.267 之間：會擦到前緣' },
     { s: 0.8, angle: 45, made: true, zone: 'rim', why: '離後緣 0.2，介於 0.5R=0.133 和 R=0.267 之間：會碰後緣內側' },
     { s: 0.1, angle: 45, made: false, zone: 'short', why: '前緣餘裕 0.071 < 0.16：正面撞上前緣' },

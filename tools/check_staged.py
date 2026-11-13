@@ -65,6 +65,7 @@ def main() -> int:
         listing = git("-c", "core.quotepath=off", "diff", "--cached", "--name-only", "--diff-filter=ACMR", "-z")
     files = [f for f in listing.split("\0") if f]
     problems: list[str] = []
+    synth_videos = 0
 
     for f in files:
         ext = ext_of(f)
@@ -82,9 +83,14 @@ def main() -> int:
                 problems.append(f"{f}：影片檔不可以提交（只有 {SYNTH_VIDEO_DIR} 的合成測試影片例外）")
             elif size > SYNTH_VIDEO_MAX:
                 problems.append(f"{f}：合成測試影片太大（{size // 1024} KB），請確認不是實拍影片")
+            else:
+                synth_videos += 1
             continue
         if ext in IMAGE_EXT and not f.startswith(IMAGE_ALLOWED):
             problems.append(f"{f}：圖片只能放在 {', '.join(IMAGE_ALLOWED)}，而且不可以含真人")
+            continue
+        if f.lower().endswith((".arclog.json", ".arclog-auto.json", ".arclog.csv")):
+            problems.append(f"{f}：標註包和分析結果對應到實拍影片（檔名也常含人名），不提交")
             continue
         if ext in WEIGHT_EXT:
             problems.append(f"{f}：PyTorch 權重不提交，請只提交匯出的 ONNX")
@@ -115,7 +121,8 @@ def main() -> int:
         for p in problems:
             print("  - " + p)
         return 1
-    print(f"[OK] {scope}共 {len(files)} 個檔案，沒有影片、不該出現的圖片、權重或金鑰。")
+    extra = f"（其中 {synth_videos} 支是 {SYNTH_VIDEO_DIR} 的合成測試影片，畫面只有幀號條碼）" if synth_videos else ""
+    print(f"[OK] {scope}共 {len(files)} 個檔案，沒有實拍影片、不該出現的圖片、權重或金鑰。{extra}")
     return 0
 
 

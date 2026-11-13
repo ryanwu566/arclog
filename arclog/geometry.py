@@ -3,16 +3,22 @@ from __future__ import annotations
 
 import math
 
-from .constants import BALL_DIAMETER_M, RIM_DIAMETER_M
+from .constants import BALL_DIAMETER_M, FOCAL_RATIO, RIM_DIAMETER_M
 
 
-def make_hoop_frame(front: dict, back: dict, level: str = "rim") -> dict | None:
+def make_hoop_frame(front: dict, back: dict, level: str = "rim", width: float | None = None, height: float | None = None,
+                    focal: float | None = None) -> dict | None:
     """由籃框前緣、後緣建立座標系。
 
     u 軸：前緣 → 後緣，前緣 u=0、後緣 u=1；v 軸：垂直籃框平面往上；單位是籃框內徑。
-    level='rim' 以兩點連線當水平；level='image' 以畫面水平當水平。
+    level='persp'：以兩點連線當水平，但先扣掉籃框因為透視看起來是斜的那一部分（實拍影片的預設）。
+                   需要 width、height（影片的像素大小），沒給就當成 'rim'。說明見 web/js/core/geometry.js。
+    level='rim'  ：直接以兩點連線當水平。
+    level='image'：以畫面水平當水平。
     """
-    level = "image" if level == "image" else "rim"
+    level = "image" if level == "image" else ("persp" if level == "persp" else "rim")
+    if level == "persp" and not (width is not None and height is not None and width > 0 and height > 0):
+        level = "rim"
     dx = back["x"] - front["x"]
     dy = back["y"] - front["y"]
     dist = math.sqrt(dx * dx + dy * dy)
@@ -21,7 +27,25 @@ def make_hoop_frame(front: dict, back: dict, level: str = "rim") -> dict | None:
     sgn = -1.0 if dx < 0 else 1.0
     tilt_deg = math.atan2(-dy * sgn, abs(dx)) * 180 / math.pi
 
-    if level == "image":
+    persp_deg = 0.0
+    focal_used = None
+    if level == "persp":
+        focal_used = focal if (focal is not None and focal > 0) else FOCAL_RATIO
+        f = focal_used * max(width, height)
+        cx = (front["x"] + back["x"]) / 2
+        cy = (front["y"] + back["y"]) / 2
+        xn = (cx - width / 2) / f
+        yn = (height / 2 - cy) / f
+        tan_tau = (xn * yn) / (1 + xn * xn)
+        cos_tau = 1 / math.sqrt(1 + tan_tau * tan_tau)
+        sin_tau = tan_tau * cos_tau
+        persp_deg = math.atan(tan_tau) * 180 / math.pi
+        ux = (dx * cos_tau - dy * sin_tau) / dist
+        uy = (dx * sin_tau + dy * cos_tau) / dist
+        length = (dist * cos_tau) / math.sqrt(1 + xn * xn)
+        ox = cx - 0.5 * length * ux
+        oy = cy - 0.5 * length * uy
+    elif level == "image":
         if not abs(dx) > 1e-6:
             return None
         ox = front["x"]
@@ -47,6 +71,8 @@ def make_hoop_frame(front: dict, back: dict, level: str = "rim") -> dict | None:
         "pxPerM": length / RIM_DIAMETER_M,
         "ballDiameterPx": (length / RIM_DIAMETER_M) * BALL_DIAMETER_M,
         "tiltDeg": tilt_deg,
+        "perspDeg": persp_deg,
+        "focal": focal_used,
     }
 
 

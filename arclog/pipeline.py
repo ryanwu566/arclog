@@ -105,16 +105,19 @@ def detect_video(path, detector, density: str = "normal", stride: int | None = N
     }
 
 
-def run_auto(path, hoop_points: dict, detector, level: str = "rim", drag: bool = True, density: str = "normal",
-             stride: int | None = None, start: float | None = None, end: float | None = None, progress=None) -> dict:
+def run_auto(path, hoop_points: dict, detector, level: str = "persp", drag: bool = True, density: str = "normal",
+             stride: int | None = None, start: float | None = None, end: float | None = None, progress=None,
+             focal: float | None = None) -> dict:
     """完整的自動流程。hoop_points = {'front': {'x','y'}, 'back': {'x','y'}}（顯示方向的像素）。
 
+    level：水平基準，'persp'（籃框連線並修正透視，實拍影片的預設）、'rim'、'image'；說明見 arclog/geometry.py。
     回傳 detect_video 的內容，加上 'hoop'（座標系）、'shots'（每一球）、'stats'（追蹤統計）。
     """
-    hoop = make_hoop_frame(hoop_points["front"], hoop_points["back"], level)
-    if hoop is None:
+    if make_hoop_frame(hoop_points["front"], hoop_points["back"], "image" if level == "image" else "rim") is None:
         raise ValueError("籃框的兩個點太接近，無法校正")
     det = detect_video(path, detector, density=density, stride=stride, start=start, end=end, progress=progress)
+    # 修正透視需要知道畫面大小，所以等讀到影片之後才建立座標系
+    hoop = make_hoop_frame(hoop_points["front"], hoop_points["back"], level, width=det["width"], height=det["height"], focal=focal)
     res = find_shots(det["detections"], hoop, dragK=DRAG_K_RIM if drag else 0)
     det.update(hoop=hoop, hoopPoints=hoop_points, shots=res["shots"], stats=res["stats"])
     return det

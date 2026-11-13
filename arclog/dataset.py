@@ -20,9 +20,12 @@ def align_frames(bundle_times: list[float], video_times: list[float], needed: li
     """把標註包裡的幀號（瀏覽器看到的幀）對到 Python 解出來的幀號。
 
     兩邊各有一串「每一幀的時間戳」。做法：
-      1. 先扣掉兩邊第一幀的時間差（有些播放器的時間軸起點不同）。
-      2. 幀數相同、而且每一幀的時間都對得上（差不到半幀）→ 幀號直接相同，這是最常見的情況。
-      3. 否則逐幀找時間最接近的那一幀；差超過半幀的就放棄（寧可少一筆也不要標錯位置）。
+      1. 幀數相同、而且每一幀的間隔都對得上（扣掉起點的差之後，每一幀差不到四分之一幀）
+         → 幀號直接相同。這是最常見的情況。起點可以不同：有的程式把第一幀當成 0 秒，有的不是。
+      2. 幀數不同：代表有一邊多看到或少看到幾幀。這時直接比時間戳、不做任何平移，
+         逐幀找時間最接近的那一幀；差超過四分之一幀的就放棄（寧可少一筆也不要標錯位置）。
+         兩邊的時間戳都讀自同一個檔案，正常情況只會差幾微秒；差到接近半幀就分不出該對前一幀還是後一幀了。
+         （如果這時還去扣掉起點的差，「瀏覽器少看到第一幀」就會整個錯一格而不自知。）
 
     needed：只需要對齊哪些幀號（預設全部）。
     回傳 {'map': {標註包幀號: 影片幀號}, 'mode': 'identity'|'nearest', 'offset': 秒,
@@ -31,10 +34,10 @@ def align_frames(bundle_times: list[float], video_times: list[float], needed: li
     if not bundle_times or not video_times:
         return {"map": {}, "mode": "nearest", "offset": 0.0, "maxError": 0.0, "dropped": list(needed or []), "tolerance": 0.0}
     want = list(range(len(bundle_times))) if needed is None else sorted(set(needed))
-    offset = video_times[0] - bundle_times[0]
-    tol = 0.5 * min(median_gap(bundle_times), median_gap(video_times))
+    tol = 0.25 * min(median_gap(bundle_times), median_gap(video_times))
 
     if len(bundle_times) == len(video_times):
+        offset = video_times[0] - bundle_times[0]
         worst = 0.0
         for a, b in zip(bundle_times, video_times):
             err = abs(b - a - offset)
@@ -47,11 +50,12 @@ def align_frames(bundle_times: list[float], video_times: list[float], needed: li
     mapping: dict[int, int] = {}
     dropped: list[int] = []
     worst = 0.0
+    offset = 0.0
     for f in want:
         if not 0 <= f < len(bundle_times):
             dropped.append(f)
             continue
-        target = bundle_times[f] + offset
+        target = bundle_times[f]
         j = bisect.bisect_left(video_times, target)
         best = None
         for cand in (j - 1, j):
@@ -77,6 +81,9 @@ def check_fingerprint(bundle: dict, probe: dict, frame_count: int) -> tuple[list
     errors: list[str] = []
     warnings: list[str] = []
     v = bundle["video"]
+    if v.get("timeSource") == "estimated":
+        errors.append("這份標註是在「讀不到影片時間戳、只能用估計幀率」的情況下做的，幀的對應不可靠，不適合拿來當訓練資料。"
+                      "請改用電腦上的 Chrome 重新載入同一個檔案再標記。")
     if (int(v["width"]), int(v["height"])) != (int(probe["width"]), int(probe["height"])):
         errors.append(f"解析度不同：標註時是 {v['width']}×{v['height']}，這支影片是 {probe['width']}×{probe['height']}。這不是標註時用的那個檔案。")
     n = len(bundle["frameTimes"])

@@ -13,6 +13,9 @@ BALL_RADIUS_RIM = BALL_DIAMETER_M / (2 * RIM_DIAMETER_M)
 #: 對標的理想入框角度（度）。
 IDEAL_ENTRY_DEG = 45
 
+#: 手機 1 倍鏡頭錄影時的焦距（畫面長邊的幾倍）。只用來估計籃框因透視看起來斜了幾度，見 geometry.py。
+FOCAL_RATIO = 0.8
+
 #: 空氣阻力常數 k = ½·ρ·Cd·A / m（1/公尺）。說明見 constants.js。
 DRAG_K_PER_M = 0.0226
 

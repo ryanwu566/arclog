@@ -57,7 +57,7 @@ def test_prng_matches_js():
 
 def test_geometry():
     for c in vectors("geometry.json")["cases"]:
-        frame = make_hoop_frame(c["front"], c["back"], c["level"])
+        frame = make_hoop_frame(c["front"], c["back"], c["level"], width=c.get("width"), height=c.get("height"), focal=c.get("focal"))
         if c["frame"] is None:
             assert frame is None
             continue

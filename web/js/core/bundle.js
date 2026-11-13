@@ -8,6 +8,7 @@
 //            timeSource, engine },      ← 也當作「是不是同一個檔案」的指紋
 //   frameTimes: [每一幀的時間戳（秒）],
 //   hoop: { front:{x,y}, back:{x,y}, level, rimDiameterM, pxPerM, tiltDeg },
+//         level='persp' 時多兩欄：focal（假設的焦距，畫面長邊的幾倍）、perspDeg（扣掉的透視傾斜）
 //   ball: { diameterM, diameterPx },   ← 由籃框比例推算
 //   shots: [ { id, source, made, angleDeg, crossS,
 //              frames: [ { f, t, x, y, src: "manual" | "interp" | "auto" } ] } ],
@@ -67,6 +68,7 @@ export function buildBundle(p) {
       rimDiameterM: RIM_DIAMETER_M,
       pxPerM: r3(p.hoop.pxPerM),
       tiltDeg: r3(p.hoop.tiltDeg),
+      ...(p.hoop.level === 'persp' ? { focal: p.hoop.focal, perspDeg: r3(p.hoop.perspDeg) } : {}),
     },
     ball: { diameterM: BALL_DIAMETER_M, diameterPx: r3(p.hoop.ballDiameterPx) },
     shots: p.shots.map((s) => ({

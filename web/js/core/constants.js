@@ -13,6 +13,11 @@ export const BALL_RADIUS_RIM = BALL_DIAMETER_M / (2 * RIM_DIAMETER_M);
 /** 對標的理想入框角度（度）。 */
 export const IDEAL_ENTRY_DEG = 45;
 
+// 手機 1 倍鏡頭錄影時的焦距，以「畫面長邊的幾倍」表示。
+// 26mm 等效鏡頭在 16:9 錄影時約 0.72 倍，加上防手震的裁切後大約 0.8 到 0.87 倍。
+// 只用來估計「籃框因為透視看起來斜了幾度」（geometry.js 的 level='persp'），差 10% 影響不到 0.2 度。
+export const FOCAL_RATIO = 0.8;
+
 /**
  * 空氣阻力常數 k = ½·ρ·Cd·A / m，單位 1/公尺。
  * ρ=1.2 kg/m³、Cd≈0.5、半徑 0.12 m、質量 0.60 kg → 約 0.0226。

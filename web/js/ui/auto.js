@@ -16,6 +16,12 @@ const BY_TEXT = {
   bounce: '過框後球又彈起來',
 };
 
+/** 給使用者看的運算方式：WebGPU，或 WASM 加上用了幾個執行緒（1 個代表多執行緒沒有啟用，會慢很多）。 */
+function backendLabel(backend, threads) {
+  if (backend === 'webgpu') return 'WebGPU';
+  return `WASM（${threads > 1 ? `${threads} 個執行緒` : '單執行緒'}）`;
+}
+
 export function createAuto(app) {
   let session = null;
   let source = null;
@@ -170,7 +176,7 @@ export function createAuto(app) {
     let inferMs = 0;
     let failure = null;
     let wake = null;
-    const backendName = detector.backend === 'webgpu' ? 'WebGPU' : 'WASM';
+    const backendName = backendLabel(detector.backend, detector.info.threads);
     bar.max = total;
     bar.value = 0;
     const tScan = performance.now();
@@ -254,6 +260,7 @@ export function createAuto(app) {
     const result = findShots(detections, hoop, { dragK: session.drag ? DRAG_K_RIM : 0 });
     lastRun = {
       backend: detector.backend,
+      threads: detector.info.threads,
       attempts: detector.attempts,
       frames: done,
       stride,
@@ -429,7 +436,7 @@ export function createAuto(app) {
     showOnly('results');
     const r = lastRun;
     $('#auto-stats').textContent =
-      `${r.backend === 'webgpu' ? 'WebGPU' : 'WASM'}，處理 ${r.frames} 幀、花了 ${r.seconds < 90 ? `${Math.round(r.seconds)} 秒` : `${(r.seconds / 60).toFixed(1)} 分鐘`}；` +
+      `${backendLabel(r.backend, r.threads)}，處理 ${r.frames} 幀、花了 ${r.seconds < 90 ? `${Math.round(r.seconds)} 秒` : `${(r.seconds / 60).toFixed(1)} 分鐘`}；` +
       `偵測到 ${r.detections} 個球的位置，其中 ${r.stats.static} 個是靜止不動的。`;
     if (!found.length) {
       showOnly('setup');

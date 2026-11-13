@@ -58,7 +58,7 @@ def main() -> int:
     ap.add_argument("--stage", required=True, choices=sorted(STAGE_LABELS), help="A、B、C 或 synthetic")
     ap.add_argument("--label", help="網站選單顯示的名稱（預設依 stage 決定）")
     ap.add_argument("--imgsz", type=int, nargs=2, default=[384, 640], metavar=("高", "寬"))
-    ap.add_argument("--conf", type=float, default=None, help="建議的信心門檻（預設：階段 A 用 0.10，其餘 0.25）")
+    ap.add_argument("--conf", type=float, default=None, help="建議的信心門檻（預設：階段 A 用 0.05，其餘 0.15；假偵測由軌跡邏輯濾掉，所以門檻可以設低）")
     ap.add_argument("--note", default="", help="寫進 manifest 的補充說明")
     ap.add_argument("--data", default="", help="訓練資料來源的簡短描述（寫進 manifest）")
     ap.add_argument("--set-default", action="store_true", help="設成網站預設使用的模型")
@@ -96,7 +96,7 @@ def main() -> int:
         return 1
     class_index = det.class_index
     out_shape = [int(d) if isinstance(d, int) else str(d) for d in det.session.get_outputs()[0].shape]
-    conf = args.conf if args.conf is not None else (0.10 if args.stage == "A" else 0.25)
+    conf = args.conf if args.conf is not None else (0.05 if args.stage == "A" else 0.15)
 
     entry = {
         "id": args.id,

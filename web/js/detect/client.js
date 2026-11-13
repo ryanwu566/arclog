@@ -79,7 +79,7 @@ export async function createDetector(o) {
   const attempts = [];
 
   for (const backend of backends) {
-    const init = { backend, conf, iou: 0.5, maxDet: 8, threads };
+    const init = { backend, conf, iou: 0.5, maxDet: 12, threads };
     if (o.file) {
       // 每次嘗試都要一份新的緩衝區（傳給 Worker 之後這邊就不能再用了）
       init.modelBuffer = await o.file.arrayBuffer();

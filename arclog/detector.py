@@ -52,13 +52,27 @@ def find_model(model: str | None = None, models_dir: Path | str = MODELS_DIR) ->
     回傳 {'path', 'classIndex'（可能是 None，由模型內的資訊決定）, 'conf', 'id'}。
     """
     models_dir = Path(models_dir)
-    if model and Path(model).suffix.lower() == ".onnx" and Path(model).exists():
-        return {"path": Path(model), "classIndex": None, "conf": None, "id": Path(model).stem}
+    if model and Path(model).suffix.lower() == ".onnx":
+        path = Path(model)
+        if not path.exists():
+            raise FileNotFoundError(f"找不到模型檔 {path}")
+        # 旁邊如果有 manifest.json（export_onnx.py 產生的），就沿用裡面登記的類別和信心門檻
+        side = path.parent / "manifest.json"
+        if side.exists():
+            try:
+                for m in json.loads(side.read_text(encoding="utf-8")).get("models", []):
+                    if m.get("file") == path.name:
+                        return {"path": path, "classIndex": m.get("classIndex"), "conf": m.get("conf"), "id": m["id"],
+                                "stage": m.get("stage"), "label": m.get("label")}
+            except (ValueError, KeyError, OSError):
+                pass
+        return {"path": path, "classIndex": None, "conf": None, "id": path.stem, "stage": None, "label": None}
     manifest = load_manifest(models_dir)
     want = model or manifest.get("default")
     for m in manifest.get("models", []):
         if m["id"] == want:
-            return {"path": models_dir / m["file"], "classIndex": m.get("classIndex"), "conf": m.get("conf"), "id": m["id"]}
+            return {"path": models_dir / m["file"], "classIndex": m.get("classIndex"), "conf": m.get("conf"), "id": m["id"],
+                    "stage": m.get("stage"), "label": m.get("label")}
     raise FileNotFoundError(f"找不到模型「{want}」。可用的有：" + "、".join(m["id"] for m in manifest.get("models", [])))
 
 
@@ -66,12 +80,14 @@ class BallDetector:
     """載入 ONNX 模型，對一幀畫面找出籃球。"""
 
     def __init__(self, model_path, class_index: int | None = None, conf: float = 0.15, iou: float = 0.5,
-                 max_det: int = 8, providers: list[str] | None = None, threads: int | None = None):
+                 max_det: int = 12, providers: list[str] | None = None, threads: int | None = None):
         import onnxruntime as ort
 
         so = ort.SessionOptions()
         if threads:
             so.intra_op_num_threads = int(threads)
+        # 推論的執行緒在等工作時不要空轉：影片解碼也在用 CPU，空轉會互搶（實測關掉後整體快約 1.6 倍）
+        so.add_session_config_entry("session.intra_op.allow_spinning", "0")
         available = ort.get_available_providers()
         chosen = [p for p in (providers or ["CPUExecutionProvider"]) if p in available] or ["CPUExecutionProvider"]
         self.session = ort.InferenceSession(str(model_path), sess_options=so, providers=chosen)

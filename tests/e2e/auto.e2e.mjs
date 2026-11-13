@@ -74,7 +74,7 @@ async function compareWithTruth(page) {
 test('自動偵測（預設後端）：跑完示範影片，每球一張確認卡，全部接受後的報告誤差 < 1 度', async (t) => {
   const { context, page, errors } = await openDemoAtAuto();
   assert.match(await page.textContent('#auto-model'), /階段 A/);
-  assert.match(await page.textContent('#auto-model-note'), /未經實拍驗證/);
+  assert.match(await page.textContent("#auto-model-note"), /尚未驗證/);
   await page.click('#auto-start');
   await page.waitForSelector('#auto-progress:not([hidden])');
   assert.equal(await page.isVisible('#auto-bar'), true, '要有進度條');

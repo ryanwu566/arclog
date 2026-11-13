@@ -24,7 +24,8 @@ export function createSession(o) {
     mode: o.mode,
     info: o.info || null,
     hoopPoints: { front: null, back: null },
-    level: 'rim',
+    // 水平基準：實拍影片用「籃框連線並修正透視」；示範模式的合成畫面沒有透視，直接用籃框連線
+    level: o.mode === 'demo' ? 'rim' : 'persp',
     drag: true,
     shots: [],
     draft: [],
@@ -60,7 +61,19 @@ export function undo(s) {
 export function hoopFrame(s) {
   const { front, back } = s.hoopPoints;
   if (!front || !back) return null;
-  return makeHoopFrame(front, back, { level: s.level });
+  return makeHoopFrame(front, back, { level: s.level, width: s.info ? s.info.width : undefined, height: s.info ? s.info.height : undefined });
+}
+
+export const LEVELS = ['persp', 'rim', 'image'];
+
+/**
+ * 籃框兩點連線斜了幾度。level='persp' 時 residual 是「扣掉透視之後還剩幾度」：
+ * 那一部分才是手機沒放平、鏡頭有仰角，或兩點沒點在同樣高度造成的。
+ */
+export function hoopSkew(s) {
+  const hoop = hoopFrame(s);
+  if (!hoop) return null;
+  return { raw: hoop.tiltDeg, persp: hoop.perspDeg, residual: hoop.tiltDeg - hoop.perspDeg, level: hoop.level };
 }
 
 const dragK = (s) => (s.drag ? DRAG_K_RIM : 0);
@@ -71,7 +84,12 @@ export function hoopWarnings(s) {
   const hoop = hoopFrame(s);
   if (!hoop) return out;
   if (hoop.len < 30) out.push(`籃框在畫面上只有 ${Math.round(hoop.len)} 像素寬，角度會比較不準。建議鏡頭近一點，或用解析度高一點的影片。`);
-  if (Math.abs(hoop.tiltDeg) > 4) out.push(`兩點連線歪了 ${Math.abs(hoop.tiltDeg).toFixed(1)} 度。請確認兩點是不是都點在籃框的同一個高度，或手機有沒有放平。`);
+  const skew = hoop.tiltDeg - hoop.perspDeg;
+  if (hoop.level === 'persp') {
+    if (Math.abs(skew) > 3) out.push(`扣掉透視之後，兩點連線還歪了 ${Math.abs(skew).toFixed(1)} 度。可能是手機沒放平、鏡頭往上仰，或兩點沒有點在籃框同樣的高度。角度可能會差到 1 度左右。`);
+  } else if (Math.abs(hoop.tiltDeg) > 4) {
+    out.push(`兩點連線歪了 ${Math.abs(hoop.tiltDeg).toFixed(1)} 度。請確認兩點是不是都點在籃框的同一個高度，或手機有沒有放平。`);
+  }
   if (s.info && hoop.len > s.info.width * 0.5) out.push('籃框寬度超過半個畫面，請確認點的是籃框的前緣和後緣。');
   return out;
 }
@@ -90,7 +108,7 @@ export function resetHoop(s) {
 export function setLevel(s, level) {
   if (s.level === level) return;
   remember(s);
-  s.level = level === 'image' ? 'image' : 'rim';
+  s.level = LEVELS.includes(level) ? level : 'persp';
   reanalyzeAll(s);
 }
 
@@ -367,7 +385,7 @@ export function restoreDraft(s, d) {
   if (!d || d.key !== draftKey(s.info)) return 0;
   if (typeof d.id === 'string' && d.id) s.id = d.id; // 同一次練習沿用同一個代號，歷次紀錄才不會重複
   s.hoopPoints = d.hoopPoints || { front: null, back: null };
-  s.level = d.level === 'image' ? 'image' : 'rim';
+  if (LEVELS.includes(d.level)) s.level = d.level;
   s.draft = Array.isArray(d.draft) ? d.draft : [];
   s.noBall = Array.isArray(d.noBall) ? d.noBall : [];
   s.player = typeof d.player === 'string' ? d.player : '';

@@ -6,17 +6,37 @@
 // 環境變數：
 //   ARCLOG_E2E_CHANNEL   chrome（預設）或 msedge
 //   ARCLOG_E2E_HEADED=1  顯示瀏覽器視窗
-//   ARCLOG_E2E_PYTHON    啟動伺服器用的 python 指令（預設 python）
+//   ARCLOG_E2E_PYTHON    要用的 python 指令（預設：專案裡的 .venv，沒有的話用 python）
 
 import { spawn } from 'node:child_process';
 import { createServer } from 'node:net';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { chromium } from 'playwright-core';
 
 export const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 export const FIXTURES = join(ROOT, 'tests', 'fixtures');
+
+const VENV_PYTHON = join(ROOT, '.venv', process.platform === 'win32' ? 'Scripts/python.exe' : 'bin/python');
+/** 測試用的 Python：需要 requirements.txt 裡的套件（讀影片、跑模型）。 */
+export const PYTHON = process.env.ARCLOG_E2E_PYTHON || (existsSync(VENV_PYTHON) ? VENV_PYTHON : 'python');
+
+/** 在專案根目錄執行一支 Python 腳本，回傳 {code, output}（輸出是 UTF-8）。 */
+export function runPython(args) {
+  return new Promise((resolve) => {
+    const proc = spawn(PYTHON, args, {
+      cwd: ROOT,
+      env: { ...process.env, PYTHONUTF8: '1', PYTHONIOENCODING: 'utf-8' },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    const chunks = [];
+    proc.stdout.on('data', (d) => chunks.push(d));
+    proc.stderr.on('data', (d) => chunks.push(d));
+    proc.on('error', (err) => resolve({ code: -1, output: String(err) }));
+    proc.on('close', (code) => resolve({ code, output: Buffer.concat(chunks).toString('utf8') }));
+  });
+}
 
 function freePort() {
   return new Promise((resolve, reject) => {
@@ -39,7 +59,7 @@ export async function startServer(opts = {}) {
   const port = await freePort();
   const args = [join(ROOT, 'tools', 'serve.py'), '--port', String(port), '--quiet'];
   if (opts.isolation === false) args.push('--no-isolation');
-  const proc = spawn(process.env.ARCLOG_E2E_PYTHON || 'python', args, { stdio: ['ignore', 'pipe', 'pipe'] });
+  const proc = spawn(PYTHON, args, { stdio: ['ignore', 'pipe', 'pipe'] });
   let log = '';
   proc.stdout.on('data', (d) => (log += d));
   proc.stderr.on('data', (d) => (log += d));

@@ -22,6 +22,12 @@
 !/tests/fixtures/video/*.mp4
 !/tests/fixtures/video/*.mov
 
+# 標註包和分析結果：檔名常含人名或日期，內容對應到實拍影片
+*.arclog.json
+*.arclog-auto.json
+*.arclog.csv
+*.grid.png
+
 # Python
 .venv/
 venv/

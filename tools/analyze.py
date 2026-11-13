@@ -72,7 +72,9 @@ def main() -> int:
     ap.add_argument("--model", default=None, help="模型代號（models/manifest.json 裡的 id）或 .onnx 檔的路徑；預設用 manifest 的預設模型")
     ap.add_argument("--conf", type=float, default=None, help="偵測的信心門檻（預設用模型建議值）")
     ap.add_argument("--density", choices=["normal", "fine"], default="normal", help="normal：每秒看 20–30 幀；fine：每一幀都看（最多每秒 60 幀）")
-    ap.add_argument("--level", choices=["rim", "image"], default="rim", help="水平基準：rim＝籃框連線（預設）；image＝畫面水平")
+    ap.add_argument("--level", choices=["persp", "rim", "image"], default="persp",
+                    help="水平基準：persp＝籃框連線並修正透視（預設，實拍影片用）；rim＝籃框連線不修正（合成畫面用）；image＝畫面水平")
+    ap.add_argument("--focal", type=float, default=None, help="鏡頭焦距是畫面長邊的幾倍（只有 --level persp 用到；預設 0.8，也就是手機的 1 倍鏡頭）")
     ap.add_argument("--no-drag", action="store_true", help="關閉空氣阻力修正（純拋物線）")
     ap.add_argument("--start", type=float, default=None, help="從第幾秒開始")
     ap.add_argument("--end", type=float, default=None, help="到第幾秒結束")
@@ -142,14 +144,19 @@ def main() -> int:
     t0 = time.time()
     try:
         result = run_auto(video, hoop_points, detector, level=args.level, drag=not args.no_drag, density=args.density,
-                          start=args.start, end=args.end, progress=progress)
+                          start=args.start, end=args.end, progress=progress, focal=args.focal)
     except ValueError as err:
         print(f"[X] {err}")
         return 1
     shots = result["shots"]
     hoop = result["hoop"]
     print(f"影片 {result['width']}×{result['height']}、每秒 {result['fps']:.2f} 幀、共 {len(result['times'])} 幀；每 {result['stride']} 幀偵測一次，用了 {fmt_time(result['seconds'])}")
-    print(f"籃框寬 {hoop['len']:.0f} 像素（每公尺 {hoop['pxPerM']:.0f} 像素），連線傾斜 {abs(hoop['tiltDeg']):.1f} 度")
+    tilt = f"連線傾斜 {abs(hoop['tiltDeg']):.1f} 度"
+    if hoop["level"] == "persp":
+        tilt += f"（其中透視約 {abs(hoop['perspDeg']):.1f} 度，扣掉後剩 {abs(hoop['tiltDeg'] - hoop['perspDeg']):.1f} 度）"
+    print(f"籃框寬 {hoop['len']:.0f} 像素（每公尺 {hoop['pxPerM']:.0f} 像素），{tilt}")
+    if hoop["level"] == "persp" and abs(hoop["tiltDeg"] - hoop["perspDeg"]) > 3:
+        print("  注意：扣掉透視後還歪超過 3 度，可能是手機沒放平、鏡頭往上仰，或籃框座標不準；角度可能差到 1 度左右。")
     if hoop["len"] < 30:
         print("  注意：籃框在畫面上很小，角度會比較不準。")
     st = result["stats"]
@@ -160,7 +167,7 @@ def main() -> int:
     csv_path = out_dir / f"{stem}.arclog.csv"
     write_csv(csv_path, shots_for_csv(shots))
     detail = {
-        "video": video.name, "model": info["id"], "conf": conf, "level": args.level, "drag": not args.no_drag,
+        "video": video.name, "model": info["id"], "conf": conf, "level": hoop["level"], "focal": hoop["focal"], "drag": not args.no_drag,
         "width": result["width"], "height": result["height"], "fps": result["fps"], "frames": len(result["times"]),
         "stride": result["stride"], "hoop": hoop_points, "stats": st,
         "shots": [{k: s[k] for k in ("angle", "angleRaw", "crossS", "made", "madeGeometry", "madeBy", "zone", "flip", "tStart", "tEnd", "tCross",

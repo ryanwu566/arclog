@@ -209,7 +209,7 @@ export function createReportView(app) {
     show(cli, !!(hoop && hoop.front && hoop.back));
     if (hoop && hoop.front && hoop.back) {
       const r = (v) => Math.round(v * 10) / 10;
-      $('#report-cli-cmd').textContent = `python tools/analyze.py "影片的路徑\\${session.info.name}" --hoop ${r(hoop.front.x)},${r(hoop.front.y)},${r(hoop.back.x)},${r(hoop.back.y)}`;
+      $('#report-cli-cmd').textContent = `python tools/analyze.py "影片的路徑\\${session.info.name}" --hoop ${r(hoop.front.x)},${r(hoop.front.y)},${r(hoop.back.x)},${r(hoop.back.y)} --level ${session.level}`;
     }
     $('#report-saved').textContent = session.mode === 'demo' ? '示範的結果不會存進歷次紀錄。' : '';
     persist();

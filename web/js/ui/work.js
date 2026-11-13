@@ -307,7 +307,11 @@ export function createWork(app) {
     if (hoop) {
       $('#cal-width').textContent = `${Math.round(hoop.len)} 像素`;
       $('#cal-ball').textContent = `${Math.round(hoop.ballDiameterPx)} 像素`;
-      $('#cal-tilt').textContent = `${Math.abs(hoop.tiltDeg).toFixed(1)}°`;
+      const skew = S.hoopSkew(session);
+      $('#cal-tilt').textContent =
+        skew.level === 'persp'
+          ? `${Math.abs(skew.raw).toFixed(1)}°（透視約 ${Math.abs(skew.persp).toFixed(1)}°，扣掉後剩 ${Math.abs(skew.residual).toFixed(1)}°）`
+          : `${Math.abs(skew.raw).toFixed(1)}°`;
     }
     const box = $('#cal-warnings');
     clear(box);
