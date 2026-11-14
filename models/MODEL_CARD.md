@@ -16,6 +16,9 @@
 | B | `arclog-ball-b-public` | **尚未訓練**（需要 Roboflow 金鑰） | Roboflow Universe 的兩個 CC BY 4.0 資料集，只用 ball 類別 |
 | C | `arclog-ball-c-own` | **尚未訓練**（需要實拍影片） | 自己拍的練投影片（不公開），從階段 B 接著訓練 |
 
+另外有一個 `arclog-ball-synth`：用合成畫面訓練 1 輪、只用來驗證「訓練 → 匯出 → 網站載入」這條流程，
+**不放進這個資料夾、也不會出現在網站的模型選單**（重現方式和結果在 `docs/EVAL.md` 第 2 節）。
+
 三個階段都是 Ultralytics **YOLO26n**（最新一代的 Nano 尺寸；選它的理由在 `docs/PLAN.md` 2.1）。
 
 ## 階段 A：`arclog-ball-a-coco`

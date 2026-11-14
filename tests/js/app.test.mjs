@@ -11,7 +11,7 @@ import { buildReport, signed1, signed0, fmt1, fmtPct } from '../../web/js/core/r
 import * as H from '../../web/js/core/history.js';
 import { validateBundle } from '../../web/js/core/bundle.js';
 import { parseCsv, shotsToCsv } from '../../web/js/core/csv.js';
-import { makeDemoPlan, planTruth, simulateClicks, hoopPx, ballAt, frameTime } from '../../web/js/core/synth.js';
+import { makeDemoPlan, planTruth, simulateClicks, hoopPx, verticalPx, ballAt, frameTime } from '../../web/js/core/synth.js';
 
 function demoSession() {
   const plan = makeDemoPlan({});
@@ -156,6 +156,85 @@ test('session：校正的提醒（籃框太小、連線太歪）', () => {
   assert.match(S.hoopWarnings(s).join(''), /超過半個畫面/);
   S.resetHoop(s);
   assert.deepEqual(S.hoopWarnings(s), []);
+});
+
+test('session：垂直參考線基準（點完籃框再點一條鉛直的邊；提醒、復原、草稿、標註包）', () => {
+  const { s, plan, frameTimes } = demoSession();
+  for (const i of [0, 1, 2]) assert.ok(markShot(s, plan, i).ok);
+  const before = s.shots.map((x) => x.angleRaw);
+  S.setLevel(s, 'vertical');
+  assert.equal(S.nextCalPoint(s), 'top', '籃框點好了，下一個要點參考線的一端');
+  assert.equal(S.hoopFrame(s), null, '參考線還沒點完就沒有座標系');
+  assert.equal(S.calibrationProblem(s), null, '還沒點完不算有問題');
+  const vp = verticalPx(plan);
+  S.setHoopPoint(s, 'top', vp.top);
+  assert.equal(S.nextCalPoint(s), 'bottom');
+  S.setHoopPoint(s, 'bottom', vp.bottom);
+  assert.equal(S.nextCalPoint(s), null);
+  const hoop = S.hoopFrame(s);
+  assert.equal(hoop.level, 'vertical');
+  assert.ok(Math.abs(hoop.vertDeg) < 1e-9, '合成畫面沒有歪');
+  assert.equal(hoop.focal, null, '合成畫面沒有透視，不扣籃框比例');
+  // 合成畫面沒有透視、也沒有歪：和「籃框連線」量到的角度一樣
+  s.shots.forEach((x, i) => assert.ok(Math.abs(x.angleRaw - before[i]) < 1e-9, `第 ${i + 1} 球 ${before[i]} → ${x.angleRaw}`));
+  assert.deepEqual(S.hoopWarnings(s), []);
+  // 點成橫線：建不了座標系，說得出是參考線的問題；復原就好
+  S.setHoopPoint(s, 'bottom', { x: vp.top.x + 150, y: vp.top.y + 5 });
+  assert.equal(S.hoopFrame(s), null);
+  assert.equal(S.calibrationProblem(s), 'vertical');
+  S.undo(s);
+  assert.ok(S.hoopFrame(s));
+  // 參考線太短：提醒
+  S.setHoopPoint(s, 'bottom', { x: vp.top.x, y: vp.top.y + 40 });
+  assert.match(S.hoopWarnings(s).join(''), /垂直參考線只有 40 像素長/);
+  S.undo(s);
+  // 標註包帶著參考線
+  const bundle = S.sessionBundle(s, frameTimes, { createdAt: '2026-11-14T00:00:00.000Z' });
+  assert.deepEqual(validateBundle(bundle), []);
+  assert.equal(bundle.hoop.level, 'vertical');
+  assert.ok(Math.abs(bundle.hoop.vertical.top.x - vp.top.x) < 0.001 && Math.abs(bundle.hoop.vertical.bottom.y - vp.bottom.y) < 0.001);
+  // 草稿存起來再還原：基準和參考線都還在
+  const d = JSON.parse(JSON.stringify(S.serializeDraft(s)));
+  const s2 = S.createSession({ mode: 'demo', info: { ...s.info } });
+  assert.equal(S.restoreDraft(s2, d), 3);
+  assert.equal(s2.level, 'vertical');
+  assert.deepEqual(s2.hoopPoints.bottom, s.hoopPoints.bottom);
+  // 換回其他基準就不需要參考線；重新點會把參考線一起清掉
+  S.setLevel(s, 'rim');
+  assert.equal(S.nextCalPoint(s), null);
+  S.resetHoop(s);
+  assert.deepEqual(s.hoopPoints, { front: null, back: null, top: null, bottom: null });
+});
+
+test('session：垂直參考線和籃框（扣掉透視後）推算的水平差太多時提醒；示範模式不套透視', () => {
+  const s = S.createSession({ mode: 'video', info: { name: 'a.mp4', width: 1920, height: 1080, fps: 30, frameCount: 100, duration: 3.3 } });
+  S.setLevel(s, 'vertical');
+  S.setHoopPoint(s, 'front', { x: 1403.5, y: 412 });
+  S.setHoopPoint(s, 'back', { x: 1538.2, y: 405.1 });
+  S.setHoopPoint(s, 'top', { x: 1560, y: 300 });
+  S.setHoopPoint(s, 'bottom', { x: 1560, y: 520 });
+  const sk = S.hoopSkew(s);
+  // 籃框連線斜 2.9 度，其中透視約 1.5 度；鉛直的參考線說手機沒歪
+  assert.ok(Math.abs(sk.vert) < 1e-9);
+  assert.ok(sk.rimRoll > 1 && sk.rimRoll < 2, String(sk.rimRoll));
+  assert.ok(S.hoopFrame(s).focal > 0, '實拍影片會扣籃框比例');
+  assert.deepEqual(S.hoopWarnings(s), []);
+  // 參考線其實斜了 1 度（例如點到斜的支架）：兩個估計差超過 2 度
+  const a = (1 * Math.PI) / 180;
+  S.setHoopPoint(s, 'top', { x: 1560 + 220 * Math.sin(a), y: 520 - 220 * Math.cos(a) });
+  assert.match(S.hoopWarnings(s).join(''), /差了 2\.\d 度/);
+  // 同樣的點放進示範模式：合成畫面沒有透視，「修正透視」等於「籃框連線」，也不做這個比較
+  const demo = S.createSession({ mode: 'demo', info: { ...s.info } });
+  for (const k of ['front', 'back', 'top', 'bottom']) S.setHoopPoint(demo, k, s.hoopPoints[k]);
+  S.setLevel(demo, 'persp');
+  assert.equal(S.hoopFrame(demo).level, 'rim');
+  S.setLevel(demo, 'vertical');
+  assert.equal(S.hoopSkew(demo).rimRoll, null);
+  // 「畫面水平」配上下對齊的籃框兩點：問題出在籃框，不是參考線
+  S.setLevel(demo, 'image');
+  S.setHoopPoint(demo, 'back', { x: demo.hoopPoints.front.x, y: demo.hoopPoints.front.y + 30 });
+  assert.equal(S.hoopFrame(demo), null);
+  assert.equal(S.calibrationProblem(demo), 'rim');
 });
 
 test('session：自動偵測的球加進來；時間重疊的不重複加；標註包', () => {

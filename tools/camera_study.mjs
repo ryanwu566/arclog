@@ -6,9 +6,10 @@
 // docs/SHOOTING_GUIDE.md 和 docs/EVAL.md 裡「鏡頭沒擺正會差多少」的數字都是這支程式算出來的。
 // 這是幾何模擬：理想的針孔鏡頭、沒有鏡頭變形、籃框和球心都點得完全準。它不是實拍量測。
 //
-// tests/js/camera.test.mjs 用這裡的函式檢查兩件事：
+// tests/js/camera.test.mjs 用這裡的函式檢查：
 //   1. 預設的水平基準（籃框連線並修正透視）在鏡頭擺正時沒有系統性偏差
 //   2. 偏離正側面時的誤差符合 tan(量測) = tan(真實) / cos θ
+//   3. 垂直參考線基準不受手機歪斜和焦距假設影響；仰角時和其他基準一樣有偏差
 
 import { pathToFileURL } from 'node:url';
 import { makeHoopFrame, toHoop } from '../web/js/core/geometry.js';
@@ -122,14 +123,65 @@ export function rimClicks(cam) {
 }
 
 /**
- * 用網站的程式量一次，回傳量到的入框角度（度）。
- * level：'persp'（籃框連線並修正透視，實拍影片的預設）、'rim'（籃框連線）、'image'（畫面水平）
- * focal：程式「以為」的焦距（畫面寬的幾倍）；不給就用程式的預設值
+ * 籃架上鉛直的線（FIBA 規格：籃板正面在籃框中心後方 0.375 公尺，寬 1.8、高 1.05，下緣離地 2.90）。
+ *   board    籃板靠近相機的那一條側邊（「垂直參考線」預設用這條）
+ *   boardFar 籃板遠側的側邊
+ *   post     籃架立柱（籃板後方 1.6 公尺、離地 1.0 到 2.8 公尺那一段；移動式籃架常見的樣子）
  */
-export function measure(shot, cam, level = 'persp', focal = undefined) {
+export const VERTICALS = {
+  board: { x: 0.375, z: 0.9, y0: 2.9, y1: 3.95 },
+  boardFar: { x: 0.375, z: -0.9, y0: 2.9, y1: 3.95 },
+  post: { x: 0.375 + 1.6, z: 0.2, y0: 1.0, y1: 2.8 },
+};
+
+/**
+ * 使用者選「垂直參考線」時會點的兩點：那條鉛直線在畫面裡看得到的那一段的兩端（離畫面邊緣至少 10 像素）。
+ * opts.leanDeg：那條線其實不是鉛直的，往投籃方向斜了幾度（例如斜的支架）
+ * opts.dxPx：上端點往右點歪了幾個像素
+ */
+export function verticalClicks(cam, which = 'board', opts = {}) {
+  const s = VERTICALS[which];
+  const lean = Math.tan(((opts.leanDeg || 0) * Math.PI) / 180);
+  const a = project(cam, s.x, s.y0, s.z);
+  const b = project(cam, s.x + lean * (s.y1 - s.y0), s.y1, s.z);
+  // 只留畫面裡的那一段（直線投影到畫面上還是直線，所以直接在畫面上裁）
+  const m = 10;
+  let t0 = 0;
+  let t1 = 1;
+  const clip = (p, q) => {
+    // 限制 p + t·q ≥ 0
+    if (Math.abs(q) < 1e-12) return p >= 0;
+    const t = -p / q;
+    if (q > 0) t0 = Math.max(t0, t);
+    else t1 = Math.min(t1, t);
+    return true;
+  };
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const ok = clip(a.x - m, dx) && clip(W - m - a.x, -dx) && clip(a.y - m, dy) && clip(H - m - a.y, -dy);
+  if (!ok || !(t1 > t0)) return null;
+  const bottom = { x: a.x + t0 * dx, y: a.y + t0 * dy };
+  const top = { x: a.x + t1 * dx + (opts.dxPx || 0), y: a.y + t1 * dy };
+  return { top, bottom };
+}
+
+/**
+ * 用網站的程式量一次，回傳量到的入框角度（度）。
+ * level：'persp'（籃框連線並修正透視，實拍影片的預設）、'vertical'（垂直參考線）、'rim'（籃框連線）、'image'（畫面水平）
+ * focal：程式「以為」的焦距（畫面寬的幾倍）；不給就用程式的預設值
+ * vref：level='vertical' 時用哪一條線、點歪多少（見 verticalClicks）；預設是籃板靠近相機的側邊、點得完全準
+ */
+export function measure(shot, cam, level = 'persp', focal = undefined, vref = {}) {
   const { left, right } = rimClicks(cam);
+  const vertical = level === 'vertical' ? verticalClicks(cam, vref.which || 'board', vref) : null;
   // 球從 -x 飛向籃框：前緣（靠近投籃者）在畫面左邊
-  const hoop = makeHoopFrame(left, right, { level, width: W, height: H, focal });
+  const hoop = makeHoopFrame(left, right, { level, width: W, height: H, focal, vertical });
+  return measureWithFrame(shot, cam, hoop);
+}
+
+/** 用指定的籃框座標系量一球（給「點歪了」這類要自己建座標系的情況用）。 */
+export function measureWithFrame(shot, cam, hoop) {
+  if (!hoop) return NaN;
   // 取樣：整段飛行每 1/30 秒一點（像自動偵測），只到通過籃框平面為止
   const step = Math.round(240 / 30);
   const pts = [];
@@ -142,6 +194,19 @@ export function measure(shot, cam, level = 'persp', focal = undefined) {
   }
   const res = analyzeShot(pts, { dragK: DRAG_K_RIM });
   return res.ok ? res.angleRaw : NaN;
+}
+
+/**
+ * 同一個擺法下，兩種獨立的「手機歪斜」估計（度，右端高為正）：
+ *   rim      籃框連線扣掉透視之後剩下的傾斜（'persp' 基準顯示的那個數字）
+ *   vertical 鉛直參考線換算出來的傾斜（'vertical' 基準用的那個數字）
+ * 鏡頭有仰角時兩個都會偏；用來檢查「能不能拿兩者的差估出仰角」。
+ */
+export function rollEstimates(cam, which = 'board') {
+  const { left, right } = rimClicks(cam);
+  const p = makeHoopFrame(left, right, { level: 'persp', width: W, height: H });
+  const v = makeHoopFrame(left, right, { level: 'vertical', width: W, height: H, vertical: verticalClicks(cam, which) });
+  return { rim: p.tiltDeg - p.perspDeg, vertical: v ? v.vertDeg : NaN };
 }
 
 /** 模擬用的真實焦距：畫面寬的 0.8 倍（手機 1 倍鏡頭錄影的典型值）。 */
@@ -166,10 +231,11 @@ function main() {
   const shots = [50, 54, 58].map((launch) => designShot(launch));
   const LEVELS = [
     ['persp', '修正透視（預設）'],
+    ['vertical', '垂直參考線'],
     ['rim', '籃框連線'],
     ['image', '畫面水平'],
   ];
-  const errs = (cam, level, focal) => shots.map((s) => measure(s, cam, level, focal) - s.angle);
+  const errs = (cam, level, focal, vref) => shots.map((s) => measure(s, cam, level, focal, vref) - s.angle);
   const pad = (s, n) => s + ' '.repeat(Math.max(0, n - [...s].reduce((a, ch) => a + (ch.charCodeAt(0) > 255 ? 2 : 1), 0)));
   const table = (title, rows) => {
     console.log(title);
@@ -179,9 +245,10 @@ function main() {
   };
 
   console.log('每一格三個數字＝三種弧度（真實入框角度 ' + shots.map((s) => s.angle.toFixed(1)).join('、') + ' 度）量出來的誤差（度，正＝高估）。');
-  console.log('三欄＝三種水平基準：籃框連線並修正透視（實拍影片的預設）、直接用籃框連線、畫面水平。');
+  console.log('四欄＝四種水平基準：籃框連線並修正透視（實拍影片的預設）、垂直參考線（籃板靠近相機的側邊）、直接用籃框連線、畫面水平。');
   console.log('基準擺法：相機在出手點和籃框中間的正側面 8 公尺、鏡頭高 1.4 公尺、手機不仰、不轉、不歪；焦距＝畫面寬的 0.8 倍。');
   console.log('這是幾何模擬（理想鏡頭、點得完全準），不是實拍量測。');
+  console.log('「—」＝那條鉛直線不在畫面裡（太近，或腳架在罰球線旁邊時籃板出了畫面），這種擺法沒辦法用垂直參考線。');
   console.log('');
 
   console.log('一、驗證公式 tan(量測) = tan(真實) / cos θ：相機離得很遠（300 公尺，接近平行投影），偏離正側面 θ 度');
@@ -208,31 +275,60 @@ function main() {
     }),
   );
 
-  console.log('十、「修正透視」假設的焦距不準時（程式一律假設畫面寬的 0.8 倍），基準擺法、站的距離讓場景在畫面裡一樣大：');
+  console.log('十、程式假設的焦距（畫面寬的 0.8 倍）和實際不同時，基準擺法、站的距離讓場景在畫面裡一樣大：');
+  console.log(`  ${pad('', 36)}${pad('修正透視（預設）', 22)}${pad('垂直參考線', 22)}籃框連線（不用焦距）`);
   for (const ratio of [0.4, 0.6, 0.7, 0.8, 0.9, 1.0, 1.6]) {
     const cam = { ...BASE, f: ratio * W, dist: (8 * ratio) / 0.8 };
-    console.log(`  ${pad(`真實焦距 ${ratio.toFixed(1)} 倍（距離 ${cam.dist.toFixed(0)} 公尺）`, 36)}${pad(errs(cam, 'persp').map(fmt).join(' '), 22)}不修正：${errs(cam, 'rim').map(fmt).join(' ')}`);
+    console.log(`  ${pad(`真實焦距 ${ratio.toFixed(1)} 倍（距離 ${cam.dist.toFixed(0)} 公尺）`, 36)}${['persp', 'vertical', 'rim'].map((lv) => pad(errs(cam, lv).map(fmt).join(' '), 22)).join('')}`);
   }
   console.log('');
 
-  console.log('十一、籃框點歪了：其中一個點的高度點錯 1 像素（基準擺法；籃框在畫面上寬約 ' + Math.round(Math.hypot(rimClicks(BASE).right.x - rimClicks(BASE).left.x, rimClicks(BASE).right.y - rimClicks(BASE).left.y)) + ' 像素）');
+  const { left, right } = rimClicks(BASE);
+  console.log('十一、籃框點歪了：後緣點的高度點錯幾個像素（基準擺法；籃框在畫面上寬約 ' + Math.round(Math.hypot(right.x - left.x, right.y - left.y)) + ' 像素）');
+  console.log(`  ${pad('', 36)}${pad('修正透視（預設）', 22)}垂直參考線`);
+  for (const dyPx of [1, 2, 3]) {
+    const back = { x: right.x, y: right.y - dyPx };
+    const out = ['persp', 'vertical'].map((level) => {
+      const hoop = makeHoopFrame(left, back, { level, width: W, height: H, vertical: verticalClicks(BASE, 'board') });
+      return shots.map((s) => measureWithFrame(s, BASE, hoop) - s.angle);
+    });
+    console.log(`  ${pad(`後緣點高了 ${dyPx} 像素`, 36)}${out.map((o) => pad(o.map(fmt).join(' '), 22)).join('')}`);
+  }
+  console.log('');
+
+  const vb = verticalClicks(BASE, 'board');
+  const vp = verticalClicks(BASE, 'post');
+  const vlen = (v) => Math.round(Math.hypot(v.top.x - v.bottom.x, v.top.y - v.bottom.y));
+  console.log(`十二、垂直參考線本身的誤差（基準擺法；籃板側邊在畫面上看得到約 ${vlen(vb)} 像素長、籃架立柱約 ${vlen(vp)} 像素）`);
+  for (const dxPx of [1, 2, 3]) {
+    console.log(`  ${pad(`上端點往旁邊點歪 ${dxPx} 像素`, 36)}籃板側邊 ${errs(BASE, 'vertical', undefined, { dxPx }).map(fmt).join(' ')}   立柱 ${errs(BASE, 'vertical', undefined, { which: 'post', dxPx }).map(fmt).join(' ')}`);
+  }
+  for (const leanDeg of [0.5, 1, 2]) {
+    console.log(`  ${pad(`那條線其實斜了 ${leanDeg} 度`, 36)}${errs(BASE, 'vertical', undefined, { leanDeg }).map(fmt).join(' ')}`);
+  }
+  console.log('  鏡頭往上仰時，鉛直線會往畫面上方收斂，離畫面中央越遠的線斜得越多，所以用哪一條線結果不同：');
+  for (const pitchDeg of [3, 5, 10]) {
+    const cam = { ...BASE, pitchDeg };
+    const cols = ['board', 'boardFar', 'post'].map((which) => errs(cam, 'vertical', undefined, { which }).map(fmt).join(' '));
+    console.log(`  ${pad(`仰 ${pitchDeg} 度`, 36)}籃板近側 ${cols[0]}   籃板遠側 ${cols[1]}   立柱 ${cols[2]}`);
+  }
+  console.log('');
+
+  console.log('十三、能不能用「垂直參考線」和「籃框扣掉透視」兩個歪斜估計的差，反推鏡頭仰角？（度）');
+  console.log('  兩者在鏡頭擺正時都等於手機真正的歪斜；仰角讓兩個一起偏，差值才是可以拿來估仰角的訊號。');
+  for (const [label, cam] of [
+    ['擺正', BASE], ['仰 3 度', { ...BASE, pitchDeg: 3 }], ['仰 5 度', { ...BASE, pitchDeg: 5 }], ['仰 10 度', { ...BASE, pitchDeg: 10 }],
+    ['歪 3 度', { ...BASE, rollDeg: 3 }], ['真實焦距 0.6 倍', { ...BASE, f: 0.6 * W, dist: 6 }], ['真實焦距 1.0 倍', { ...BASE, f: 1.0 * W, dist: 10 }],
+  ]) {
+    const r = rollEstimates(cam);
+    const rp = rollEstimates(cam, 'post');
+    console.log(`  ${pad(label, 20)}籃框 ${fmt(r.rim)}   籃板側邊 ${fmt(r.vertical)}（差 ${fmt(r.vertical - r.rim)}）   立柱 ${fmt(rp.vertical)}（差 ${fmt(rp.vertical - r.rim)}）`);
+  }
   {
-    const { left, right } = rimClicks(BASE);
-    for (const dyPx of [1, 2, 3]) {
-      const hoop = makeHoopFrame(left, { x: right.x, y: right.y - dyPx }, { level: 'persp', width: W, height: H });
-      const out = shots.map((s) => {
-        const pts = [];
-        for (let k = 0; k < s.pts.length; k += 8) {
-          const p = s.pts[k];
-          if (p.vy < 0 && p.y < RIM_H) break;
-          const img = project(BASE, p.x, p.y, 0);
-          const [u, v] = toHoop(hoop, img.x, img.y);
-          pts.push({ u, v, t: p.t });
-        }
-        return analyzeShot(pts, { dragK: DRAG_K_RIM }).angleRaw - s.angle;
-      });
-      console.log(`  ${pad(`後緣點高了 ${dyPx} 像素`, 36)}${out.map(fmt).join(' ')}`);
-    }
+    const hp = makeHoopFrame(left, { x: right.x, y: right.y - 1 }, { level: 'persp', width: W, height: H });
+    const h0 = makeHoopFrame(left, right, { level: 'persp', width: W, height: H });
+    console.log(`  對照：籃框後緣點高 1 像素，籃框那個估計就變 ${fmt((hp.tiltDeg - hp.perspDeg) - (h0.tiltDeg - h0.perspDeg))} 度；`
+      + `籃板側邊上端點歪 1 像素，參考線那個估計變 ${fmt(Math.atan2(1, vlen(vb)) * 180 / Math.PI)} 度。`);
   }
 }
 

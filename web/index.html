@@ -122,17 +122,19 @@
             <li>拖時間軸，找一幀籃框看得清楚的畫面（可以用兩指或 ＋ 放大）。</li>
             <li>點籃框<strong>前緣</strong>：靠近投籃者的那一端。</li>
             <li>點籃框<strong>後緣</strong>：靠近籃板的那一端。</li>
+            <li>水平基準選「垂直參考線」時，再點一條<strong>鉛直的邊</strong>（例如籃板側邊）的兩端。</li>
           </ol>
           <p class="next-hint" id="cal-next" role="status" aria-live="polite"></p>
           <dl class="facts" id="cal-facts" hidden>
             <div><dt>籃框寬</dt><dd id="cal-width">—</dd></div>
             <div><dt>球直徑約</dt><dd id="cal-ball">—</dd></div>
-            <div><dt>連線傾斜</dt><dd id="cal-tilt">—</dd></div>
+            <div><dt id="cal-tilt-label">連線傾斜</dt><dd id="cal-tilt">—</dd></div>
           </dl>
           <div class="notice-list" id="cal-warnings"></div>
           <fieldset class="options">
             <legend>水平基準</legend>
             <label><input type="radio" name="level" value="persp" checked> 籃框連線，並修正透視（實拍影片的預設；假設用手機 1 倍鏡頭拍）</label>
+            <label><input type="radio" name="level" value="vertical"> 垂直參考線：再點一條鉛直的邊（籃板側邊、籃架立柱、門框）。不用假設鏡頭焦距，手機歪了也不受影響</label>
             <label><input type="radio" name="level" value="rim"> 籃框連線，不修正（合成示範畫面用）</label>
             <label><input type="radio" name="level" value="image"> 畫面水平（手機已用水平儀放平）</label>
           </fieldset>

@@ -9,6 +9,8 @@
 //   frameTimes: [每一幀的時間戳（秒）],
 //   hoop: { front:{x,y}, back:{x,y}, level, rimDiameterM, pxPerM, tiltDeg },
 //         level='persp' 時多兩欄：focal（假設的焦距，畫面長邊的幾倍）、perspDeg（扣掉的透視傾斜）
+//         level='vertical' 時多：vertical:{top:{x,y}, bottom:{x,y}}（鉛直參考線上的兩點）、
+//                                vertDeg（由參考線換算的手機歪斜）、focal（只用來扣籃框比例；沒有畫面大小時為 null）
 //   ball: { diameterM, diameterPx },   ← 由籃框比例推算
 //   shots: [ { id, source, made, angleDeg, crossS,
 //              frames: [ { f, t, x, y, src: "manual" | "interp" | "auto" } ] } ],
@@ -29,7 +31,8 @@ const r6 = (x) => Math.round(x * 1e6) / 1e6 + 0;
  * @param {object} p
  * @param {object} p.video 影片資訊（name, size, width, height, fps, frameCount, duration, ...）
  * @param {ArrayLike<number>} p.frameTimes
- * @param {{front:{x:number,y:number}, back:{x:number,y:number}, level:string}} p.hoopPoints
+ * @param {{front:{x:number,y:number}, back:{x:number,y:number}, level:string,
+ *          vertical?: {top:{x:number,y:number}, bottom:{x:number,y:number}}}} p.hoopPoints
  * @param {object} p.hoop makeHoopFrame 的結果
  * @param {{id:number, source:string, made:boolean, angleDeg:number, crossS:number,
  *          frames:{frame:number, t:number, x:number, y:number, src:string}[]}[]} p.shots
@@ -69,6 +72,16 @@ export function buildBundle(p) {
       pxPerM: r3(p.hoop.pxPerM),
       tiltDeg: r3(p.hoop.tiltDeg),
       ...(p.hoop.level === 'persp' ? { focal: p.hoop.focal, perspDeg: r3(p.hoop.perspDeg) } : {}),
+      ...(p.hoop.level === 'vertical'
+        ? {
+            vertical: {
+              top: { x: r3(p.hoopPoints.vertical.top.x), y: r3(p.hoopPoints.vertical.top.y) },
+              bottom: { x: r3(p.hoopPoints.vertical.bottom.x), y: r3(p.hoopPoints.vertical.bottom.y) },
+            },
+            vertDeg: r3(p.hoop.vertDeg),
+            focal: p.hoop.focal,
+          }
+        : {}),
     },
     ball: { diameterM: BALL_DIAMETER_M, diameterPx: r3(p.hoop.ballDiameterPx) },
     shots: p.shots.map((s) => ({
@@ -112,6 +125,12 @@ export function validateBundle(b) {
   const h = b.hoop;
   if (!h || !h.front || !h.back || !num(h.front.x) || !num(h.front.y) || !num(h.back.x) || !num(h.back.y)) {
     errs.push('hoop.front / hoop.back 不正確');
+  }
+  if (h && h.level === 'vertical') {
+    const vt = h.vertical;
+    if (!vt || !vt.top || !vt.bottom || !num(vt.top.x) || !num(vt.top.y) || !num(vt.bottom.x) || !num(vt.bottom.y)) {
+      errs.push('hoop.level 是 vertical，但 hoop.vertical（鉛直參考線的兩點）不正確');
+    }
   }
   if (!b.ball || !(b.ball.diameterPx > 0)) errs.push('ball.diameterPx 不正確');
   if (!Array.isArray(b.shots)) errs.push('缺少 shots');

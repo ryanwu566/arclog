@@ -245,7 +245,9 @@ test('自動偵測讀真的影片檔：結果和 tools/analyze.py 一致；analy
   assert.ok(Math.max(...diffs) <= 0.3, `角度差 ${diffs.map((d) => d.toFixed(2)).join('、')}`);
   assert.deepEqual(web.map((r) => r.made), cli.map((r) => r.made));
 
-  // 把指令工具的 CSV 匯入網站
+  // 把指令工具的 CSV 匯入網站。左上角的返回在報告頁是「回標記」，要再按一次才回首頁
+  await page.click('#nav-home');
+  await page.waitForSelector('#panel-mark:not([hidden])');
   await page.click('#nav-home');
   await page.waitForSelector('#view-home:not([hidden])');
   await page.setInputFiles('#file-csv', csvPath);
@@ -254,4 +256,68 @@ test('自動偵測讀真的影片檔：結果和 tools/analyze.py 一致；analy
   assert.deepEqual(imported, cli);
   assert.deepEqual(errors, [], `頁面上不應該有錯誤：${errors.join('\n')}`);
   await context.close();
+});
+
+test('垂直參考線：自動偵測讀真的影片檔；報告頁的指令帶著參考線，analyze.py 照這行指令跑出一樣的結果', async (t) => {
+  const { context, page, errors } = await openWithVideo();
+  await page.waitForSelector('#view-work:not([hidden])', { timeout: 60000 });
+  await page.check('input[name="level"][value="vertical"]');
+  await tapImage(page, truth.hoop.front.x, truth.hoop.front.y);
+  await tapImage(page, truth.hoop.back.x, truth.hoop.back.y);
+  // 故意點一條斜 2 度（上端往右）的「參考線」：角度會和「籃框連線」不同，用來確認網站和 analyze.py 都真的用了這條線
+  const rimW = Math.hypot(truth.hoop.back.x - truth.hoop.front.x, truth.hoop.back.y - truth.hoop.front.y);
+  const L = 4 * rimW;
+  const a = (2 * Math.PI) / 180;
+  const bottom = { x: truth.hoop.back.x + 0.4 * rimW, y: truth.hoop.back.y + 2.5 * rimW };
+  const top = { x: bottom.x + L * Math.sin(a), y: bottom.y - L * Math.cos(a) };
+  await tapImage(page, top.x, top.y);
+  await tapImage(page, bottom.x, bottom.y);
+  assert.equal(await page.isDisabled('#cal-done'), false);
+  await page.click('#cal-done');
+  await page.waitForSelector('#panel-mark:not([hidden])');
+  await page.click('#btn-auto');
+  await page.waitForSelector('#view-auto:not([hidden])');
+  await page.click('#auto-start');
+  await page.waitForFunction(() => !document.querySelector('#auto-results').hidden || !document.querySelector('#auto-error').hidden, null, { timeout: 420000 });
+  const error = await page.evaluate(() => (document.querySelector('#auto-error').hidden ? null : document.querySelector('#auto-error').textContent));
+  assert.equal(error, null, `自動偵測不應該出錯：${error}`);
+  await page.click('#auto-accept-all');
+  await page.waitForSelector('#panel-mark:not([hidden])');
+  await page.click('#btn-to-report');
+  await page.waitForSelector('#view-report:not([hidden])');
+  const web = await page.evaluate(() => window.__arclogReport.rows.map((r) => ({ angle: r.angle, made: r.made })));
+  const cmd = await page.textContent('#report-cli-cmd');
+  t.diagnostic(`報告頁的指令：${cmd}`);
+  assert.match(cmd, /--level vertical --vertical [\d.]+,[\d.]+,[\d.]+,[\d.]+$/);
+  assert.deepEqual(errors, [], `頁面上不應該有錯誤：${errors.join('\n')}`);
+  await context.close();
+
+  // 照報告頁給的參數執行 analyze.py（影片路徑換成實際位置）
+  const args = cmd.replace(/^python tools\/analyze\.py "[^"]*"\s*/, '').split(/\s+/);
+  const out = join(OUT, 'analyze_vertical');
+  const res = await runPython(['tools/analyze.py', MP4, ...args, '--out', out]);
+  assert.equal(res.code, 0, `analyze.py 失敗：\n${res.output}`);
+  const tilt = /依垂直參考線，手機歪了 ([\d.]+) 度/.exec(res.output);
+  assert.ok(tilt && Math.abs(Number(tilt[1]) - 2) < 0.5, `analyze.py 應該印出參考線換算的歪斜（約 2 度）：\n${res.output}`);
+  const readCsv = (dir) => readFileSync(join(dir, `${NAME}.arclog.csv`), 'utf8').replace(/^﻿/, '').trim().split(/\r?\n/).slice(1).map((line) => {
+    const [, angle, made] = line.split(',');
+    return { angle: Number(angle), made: made === '是' };
+  });
+  const cli = readCsv(out);
+  t.diagnostic(`網站（垂直參考線）：${web.map((r) => r.angle.toFixed(1)).join('、')}；analyze.py：${cli.map((r) => r.angle.toFixed(1)).join('、')}`);
+  assert.ok(web.length >= truth.shots.length - 1, `網站只找到 ${web.length} 球`);
+  assert.equal(cli.length, web.length, '網站和指令工具找到的球數應該相同');
+  const diffs = web.map((r, i) => Math.abs(r.angle - cli[i].angle));
+  assert.ok(Math.max(...diffs) <= 0.3, `角度差 ${diffs.map((d) => d.toFixed(2)).join('、')}`);
+  assert.deepEqual(web.map((r) => r.made), cli.map((r) => r.made));
+
+  // 對照：同一支影片用「籃框連線」。參考線斜了 2 度，至少有一球的角度要明顯不同
+  const outRim = join(OUT, 'analyze_rim');
+  const hoopArg = args[args.indexOf('--hoop') + 1];
+  const rim = await runPython(['tools/analyze.py', MP4, '--hoop', hoopArg, '--level', 'rim', '--out', outRim]);
+  assert.equal(rim.code, 0, rim.output);
+  const base = readCsv(outRim);
+  const shift = Math.max(...base.slice(0, cli.length).map((r, i) => Math.abs(r.angle - cli[i].angle)));
+  t.diagnostic(`和籃框連線相比，角度最多差 ${shift.toFixed(1)} 度`);
+  assert.ok(shift >= 0.2, `斜 2 度的參考線應該讓角度改變（最多只差 ${shift.toFixed(2)} 度）`);
 });

@@ -9,6 +9,9 @@ import { sampleArc } from '../core/shot.js';
 import { MIN_MANUAL_POINTS } from '../core/constants.js';
 import { saveDraft as storeDraft, clearDraft as dropDraft } from './storage.js';
 
+/** 校正時可以點、可以拖的點：籃框前緣、後緣，和垂直參考線的兩端。 */
+const CAL_IDS = ['front', 'back', 'top', 'bottom'];
+
 const ZONE_TEXT = {
   clean: '落點在框的中間，依位置判斷會進',
   rim: '落點靠近框緣，可能碰框，請看畫面確認',
@@ -126,10 +129,9 @@ export function createWork(app) {
   function onTap(p) {
     if (!session) return;
     if (step === 'calibrate') {
-      const hp = session.hoopPoints;
-      if (!hp.front) S.setHoopPoint(session, 'front', p);
-      else if (!hp.back) S.setHoopPoint(session, 'back', p);
-      else return; // 兩點都有了：要改就拖曳或按「重新點」
+      const next = S.nextCalPoint(session);
+      if (!next) return; // 都點好了：要改就拖曳或按「重新點」
+      S.setHoopPoint(session, next, p);
       changed();
     } else if (step === 'mark') {
       if (!S.hoopFrame(session)) {
@@ -146,7 +148,7 @@ export function createWork(app) {
 
   function onDrag(id, p, done) {
     if (!session) return;
-    if (step === 'calibrate' && (id === 'front' || id === 'back')) {
+    if (step === 'calibrate' && CAL_IDS.includes(id)) {
       if (done) S.setHoopPoint(session, id, p);
       else session.hoopPoints = { ...session.hoopPoints, [id]: { x: p.x, y: p.y } };
     } else if (step === 'mark' && typeof id === 'number') {
@@ -162,11 +164,13 @@ export function createWork(app) {
   view.setHandles(() => {
     if (!session) return [];
     if (step === 'calibrate') {
-      // 兩點都點好之後才能拖曳。手機上籃框的兩端只隔十幾個像素，
+      // 該點的都點好之後才能拖曳。手機上籃框的兩端只隔十幾個像素，
       // 如果第一個點可以拖，要點第二個點時會變成把第一個點拖走。
-      const { front, back } = session.hoopPoints;
-      if (!front || !back) return [];
-      return [{ id: 'front', ...front }, { id: 'back', ...back }];
+      if (S.nextCalPoint(session)) return [];
+      const { front, back, top, bottom } = session.hoopPoints;
+      const hs = [{ id: 'front', ...front }, { id: 'back', ...back }];
+      if (session.level === 'vertical') hs.push({ id: 'top', ...top }, { id: 'bottom', ...bottom });
+      return hs;
     }
     // 標記時只能拖「目前這一幀」的點，免得誤碰別幀的點
     return session.draft.filter((d) => d.frame === index).map((d) => ({ id: d.frame, x: d.x, y: d.y }));
@@ -236,6 +240,21 @@ export function createWork(app) {
       };
       if (hp.front) put(hp.front, '前緣', frontOnLeft);
       if (hp.back) put(hp.back, '後緣', !frontOnLeft);
+      // 垂直參考線（只有選這個基準時才畫）
+      if (session.level === 'vertical' && (hp.top || hp.bottom)) {
+        if (hp.top && hp.bottom) {
+          ctx.beginPath();
+          ctx.moveTo(hp.top.x, hp.top.y);
+          ctx.lineTo(hp.bottom.x, hp.bottom.y);
+          strokeBoth(ctx, u, '#6fd3ff', 1.6);
+        }
+        for (const p of [hp.top, hp.bottom]) if (p) dot(ctx, u, p.x, p.y, 4.5, '#6fd3ff');
+        const first = hp.top || hp.bottom;
+        if (!loupe) {
+          ctx.textAlign = 'left';
+          label(ctx, u, first.x + 9 * u, first.y, '垂直參考');
+        }
+      }
     }
     if (step !== 'mark' || !hoop) return;
 
@@ -292,26 +311,37 @@ export function createWork(app) {
   }
 
   // ── 面板 ──
+  const CAL_NEXT_TEXT = {
+    front: '現在請點：籃框前緣（靠近投籃者）',
+    back: '現在請點：籃框後緣（靠近籃板）',
+    top: '現在請點：垂直參考線的一端。找一條真的鉛直的邊，例如籃板側邊、籃架立柱或門框',
+    bottom: '現在請點：同一條邊的另一端（兩點離得越遠越準）',
+  };
+
   function refreshCalibratePanel() {
     if (!session) return;
-    const hp = session.hoopPoints;
     const hoop = S.hoopFrame(session);
-    $('#cal-next').textContent = !hp.front
-      ? '現在請點：籃框前緣（靠近投籃者）'
-      : !hp.back
-        ? '現在請點：籃框後緣（靠近籃板）'
-        : hoop
-          ? '兩點都點好了。位置不準可以直接拖曳調整。'
-          : '兩點太接近了，請重新點。';
+    const next = S.nextCalPoint(session);
+    const problem = S.calibrationProblem(session);
+    $('#cal-next').textContent = next
+      ? CAL_NEXT_TEXT[next]
+      : hoop
+        ? '都點好了。位置不準可以直接拖曳調整。'
+        : problem === 'vertical'
+          ? '垂直參考線的兩點太接近，或那條線不是鉛直的（和籃框連線差不多平行）。請拖曳調整，或按「重新點」。'
+          : '籃框的兩點太接近了（或上下對齊），請重新點。';
     show($('#cal-facts'), !!hoop);
     if (hoop) {
       $('#cal-width').textContent = `${Math.round(hoop.len)} 像素`;
       $('#cal-ball').textContent = `${Math.round(hoop.ballDiameterPx)} 像素`;
       const skew = S.hoopSkew(session);
+      $('#cal-tilt-label').textContent = skew.level === 'vertical' ? '手機歪斜' : '連線傾斜';
       $('#cal-tilt').textContent =
         skew.level === 'persp'
           ? `${Math.abs(skew.raw).toFixed(1)}°（透視約 ${Math.abs(skew.persp).toFixed(1)}°，扣掉後剩 ${Math.abs(skew.residual).toFixed(1)}°）`
-          : `${Math.abs(skew.raw).toFixed(1)}°`;
+          : skew.level === 'vertical'
+            ? `${Math.abs(skew.vert).toFixed(1)}°（依垂直參考線，已扣掉${skew.rimRoll != null ? `；和籃框推算的差 ${Math.abs(skew.rimRoll - skew.vert).toFixed(1)}°` : ''}）`
+            : `${Math.abs(skew.raw).toFixed(1)}°`;
     }
     const box = $('#cal-warnings');
     clear(box);
@@ -475,7 +505,7 @@ export function createWork(app) {
       return;
     }
     if (next === 'mark' && !S.hoopFrame(session)) {
-      toast('請先點好籃框的前緣和後緣');
+      toast(session.level === 'vertical' ? '請先點好籃框的前緣、後緣和垂直參考線的兩端' : '請先點好籃框的前緣和後緣');
       return;
     }
     step = next;
@@ -485,7 +515,7 @@ export function createWork(app) {
     }
     show($('#panel-calibrate'), step === 'calibrate');
     show($('#panel-mark'), step === 'mark');
-    $('#stage-canvas').setAttribute('aria-label', step === 'calibrate' ? '影片畫面。點籃框的前緣和後緣。' : '影片畫面。在球心上點一下可以標記。');
+    $('#stage-canvas').setAttribute('aria-label', step === 'calibrate' ? '影片畫面。依提示點籃框的前緣和後緣；水平基準選垂直參考線時，再點一條鉛直的邊的兩端。' : '影片畫面。在球心上點一下可以標記。');
     changed();
   }
 
@@ -500,6 +530,10 @@ export function createWork(app) {
     if (!source.hoopTruth) return;
     S.setHoopPoint(session, 'front', source.hoopTruth.front);
     S.setHoopPoint(session, 'back', source.hoopTruth.back);
+    if (source.verticalTruth) {
+      S.setHoopPoint(session, 'top', source.verticalTruth.top);
+      S.setHoopPoint(session, 'bottom', source.verticalTruth.bottom);
+    }
     changed();
   });
   for (const r of $$('input[name="level"]')) {

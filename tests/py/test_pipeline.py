@@ -140,3 +140,9 @@ def test_analyze_grid_and_errors(synth: Path, tmp_path: Path):
     assert "格式" in run("tools/analyze.py", str(video), "--hoop", "1,2,3", "--out", str(tmp_path), expect=1)
     assert "找不到影片" in run("tools/analyze.py", str(tmp_path / "nope.mp4"), "--hoop", "1,2,3,4", expect=1)
     assert "太接近" in run("tools/analyze.py", str(video), "--hoop", "5,5,5,5", "--out", str(tmp_path), expect=1)
+    # 垂直參考線：沒給參考線、格式不對、參考線不是鉛直的，都在讀影片之前就說明原因
+    hoop = "400,200,467,200"
+    assert "需要 --vertical" in run("tools/analyze.py", str(video), "--hoop", hoop, "--level", "vertical", "--out", str(tmp_path), expect=1)
+    assert "格式" in run("tools/analyze.py", str(video), "--hoop", hoop, "--level", "vertical", "--vertical", "1,2,3", "--out", str(tmp_path), expect=1)
+    assert "不是鉛直的" in run("tools/analyze.py", str(video), "--hoop", hoop, "--level", "vertical", "--vertical", "400,300,600,310",
+                               "--out", str(tmp_path), expect=1)

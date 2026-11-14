@@ -110,7 +110,8 @@ def evaluate_video(item: dict, info: dict, detector, args, cache_dir: Path, trut
     det_m = detection_metrics(det["detections"], gt, no_ball, processed, ball_px, radius=args.match_radius)
 
     hoop = make_hoop_frame(bundle["hoop"]["front"], bundle["hoop"]["back"], bundle["hoop"].get("level", "rim"),
-                           width=bundle["video"]["width"], height=bundle["video"]["height"], focal=bundle["hoop"].get("focal"))
+                           width=bundle["video"]["width"], height=bundle["video"]["height"], focal=bundle["hoop"].get("focal"),
+                           vertical=bundle["hoop"].get("vertical"))
     res = find_shots(det["detections"], hoop, dragK=DRAG_K_RIM)
     auto = [{"tCross": s["tCross"], "angle": s["angleRaw"], "made": s["made"]} for s in res["shots"]]
     truth = None

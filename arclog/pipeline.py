@@ -107,19 +107,23 @@ def detect_video(path, detector, density: str = "normal", stride: int | None = N
 
 def run_auto(path, hoop_points: dict, detector, level: str = "persp", drag: bool = True, density: str = "normal",
              stride: int | None = None, start: float | None = None, end: float | None = None, progress=None,
-             focal: float | None = None) -> dict:
+             focal: float | None = None, vertical: dict | None = None) -> dict:
     """完整的自動流程。hoop_points = {'front': {'x','y'}, 'back': {'x','y'}}（顯示方向的像素）。
 
-    level：水平基準，'persp'（籃框連線並修正透視，實拍影片的預設）、'rim'、'image'；說明見 arclog/geometry.py。
+    level：水平基準，'persp'（籃框連線並修正透視，實拍影片的預設）、'vertical'（垂直參考線，要給 vertical）、
+    'rim'、'image'；說明見 arclog/geometry.py。vertical = {'top': {'x','y'}, 'bottom': {'x','y'}}。
     回傳 detect_video 的內容，加上 'hoop'（座標系）、'shots'（每一球）、'stats'（追蹤統計）。
     """
     if make_hoop_frame(hoop_points["front"], hoop_points["back"], "image" if level == "image" else "rim") is None:
         raise ValueError("籃框的兩個點太接近，無法校正")
+    if level == "vertical" and make_hoop_frame(hoop_points["front"], hoop_points["back"], "vertical", vertical=vertical) is None:
+        raise ValueError("垂直參考線不能用：沒有給、兩點太接近，或那條線不是鉛直的（和籃框連線差不多平行）")
     det = detect_video(path, detector, density=density, stride=stride, start=start, end=end, progress=progress)
-    # 修正透視需要知道畫面大小，所以等讀到影片之後才建立座標系
-    hoop = make_hoop_frame(hoop_points["front"], hoop_points["back"], level, width=det["width"], height=det["height"], focal=focal)
+    # 修正透視（和垂直參考線的比例）需要知道畫面大小，所以等讀到影片之後才建立座標系
+    hoop = make_hoop_frame(hoop_points["front"], hoop_points["back"], level, width=det["width"], height=det["height"], focal=focal,
+                           vertical=vertical)
     res = find_shots(det["detections"], hoop, dragK=DRAG_K_RIM if drag else 0)
-    det.update(hoop=hoop, hoopPoints=hoop_points, shots=res["shots"], stats=res["stats"])
+    det.update(hoop=hoop, hoopPoints=hoop_points, vertical=vertical if level == "vertical" else None, shots=res["shots"], stats=res["stats"])
     return det
 
 

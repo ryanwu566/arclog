@@ -36,6 +36,7 @@ STAGE_LABELS = {
     "C": "階段 C：自有資料微調",
     "synthetic": "合成資料（只用來驗證流程，不代表真實準確度）",
 }
+SYNTHETIC_NOTE = "用合成畫面訓練的模型，只用來驗證流程，不代表真實準確度。"
 
 
 def sha256(path: Path) -> str:
@@ -59,7 +60,7 @@ def main() -> int:
     ap.add_argument("--label", help="網站選單顯示的名稱（預設依 stage 決定）")
     ap.add_argument("--imgsz", type=int, nargs=2, default=[384, 640], metavar=("高", "寬"))
     ap.add_argument("--conf", type=float, default=None, help="建議的信心門檻（預設：階段 A 用 0.05，其餘 0.15；假偵測由軌跡邏輯濾掉，所以門檻可以設低）")
-    ap.add_argument("--note", default="", help="寫進 manifest 的補充說明")
+    ap.add_argument("--note", default=None, help="寫進 manifest 的補充說明（網站選模型時會顯示；--stage synthetic 沒給時自動寫上「不代表真實準確度」的提醒）")
     ap.add_argument("--data", default="", help="訓練資料來源的簡短描述（寫進 manifest）")
     ap.add_argument("--set-default", action="store_true", help="設成網站預設使用的模型")
     ap.add_argument("--out-dir", default=str(MODELS), help="輸出目錄（預設 models/）")
@@ -97,6 +98,10 @@ def main() -> int:
     class_index = det.class_index
     out_shape = [int(d) if isinstance(d, int) else str(d) for d in det.session.get_outputs()[0].shape]
     conf = args.conf if args.conf is not None else (0.05 if args.stage == "A" else 0.15)
+    note = args.note
+    if note is None:
+        # 合成資料訓練的模型一定要讓使用者看得到這句（網站選這個模型時會顯示 manifest 的 note）
+        note = SYNTHETIC_NOTE if args.stage == "synthetic" else ""
 
     entry = {
         "id": args.id,
@@ -115,7 +120,7 @@ def main() -> int:
         "bytes": dst.stat().st_size,
         "sha256": sha256(dst),
         "data": args.data,
-        "note": args.note,
+        "note": note,
         "license": "AGPL-3.0",
     }
 

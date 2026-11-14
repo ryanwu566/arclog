@@ -57,7 +57,8 @@ def test_prng_matches_js():
 
 def test_geometry():
     for c in vectors("geometry.json")["cases"]:
-        frame = make_hoop_frame(c["front"], c["back"], c["level"], width=c.get("width"), height=c.get("height"), focal=c.get("focal"))
+        frame = make_hoop_frame(c["front"], c["back"], c["level"], width=c.get("width"), height=c.get("height"), focal=c.get("focal"),
+                                vertical=c.get("vertical"))
         if c["frame"] is None:
             assert frame is None
             continue
@@ -230,6 +231,13 @@ def test_bundle_validation(tmp_path):
     v = vectors("bundle.json")
     assert validate_bundle(v["good"]) == []
     assert v["good"]["format"] == BUNDLE_FORMAT
+    # 垂直參考線校正的標註包：Python 用存下來的參考線重建座標系，和網站算的比例、歪斜一致
+    gv = v["goodVertical"]
+    assert validate_bundle(gv) == []
+    h = gv["hoop"]
+    rebuilt = make_hoop_frame(h["front"], h["back"], h["level"], width=gv["video"]["width"], height=gv["video"]["height"],
+                              focal=h.get("focal"), vertical=h["vertical"])
+    assert abs(rebuilt["pxPerM"] - h["pxPerM"]) < 0.001 and abs(rebuilt["vertDeg"] - h["vertDeg"]) < 0.001
     for b in v["bads"]:
         assert validate_bundle(b["bundle"]) == b["expected"], b["name"]
     good = tmp_path / "ok.arclog.json"

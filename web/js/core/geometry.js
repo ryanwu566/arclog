@@ -4,6 +4,18 @@
 import { RIM_DIAMETER_M, BALL_DIAMETER_M, FOCAL_RATIO } from './constants.js';
 
 /**
+ * level='vertical' 時，由鉛直參考線換算出來的水平方向和籃框兩點連線最多可以差幾度。
+ * 超過就當成點錯了（點到的不是鉛直的線），不建立座標系。
+ * 透視讓籃框連線斜 2 到 6 度、手機再歪幾度，加起來也遠小於這個值。
+ */
+export const MAX_VERTICAL_SKEW_DEG = 30;
+
+/** 直線相對畫面水平的傾斜（度），右端比較高為正；和方向無關。 */
+function lineTiltDeg(dx, dy) {
+  return (Math.atan2(-dy * Math.sign(dx || 1), Math.abs(dx)) * 180) / Math.PI;
+}
+
+/**
  * 由使用者點的籃框前緣、後緣建立座標系。
  *
  *   u 軸：前緣 → 後緣（球飛行的方向），前緣 u=0、後緣 u=1
@@ -17,27 +29,66 @@ import { RIM_DIAMETER_M, BALL_DIAMETER_M, FOCAL_RATIO } from './constants.js';
  *                  xn、yn 是籃框中心離畫面中心的距離除以焦距。扣掉之後剩下的才是手機沒放平的歪斜。
  *                  需要 opts.width、opts.height（影片的像素大小）；沒給就當成 'rim'。
  *                  焦距假設為畫面長邊的 FOCAL_RATIO 倍（手機 1 倍鏡頭），可用 opts.focal 指定。
+ * level = 'vertical'：以另外點的一條鉛直參考線（籃板側邊、籃架立柱、門框）為準，和它垂直的方向就是水平。
+ *                  鏡頭沒有仰角時，鉛直的線不論在畫面哪裡都互相平行，傾斜的角度就是手機歪的角度，
+ *                  所以不需要焦距假設，籃框兩點的高度點得準不準也不影響水平。
+ *                  鏡頭有仰角時鉛直線會往畫面上方（或下方）收斂，這一項和其他基準一樣修不掉（docs/EVAL.md 4.2）。
+ *                  需要 opts.vertical = {top:{x,y}, bottom:{x,y}}（同一條鉛直線上的兩點，順序不拘）；
+ *                  沒給、兩點重合，或換算出來的水平和籃框連線差超過 MAX_VERTICAL_SKEW_DEG 度時回傳 null。
+ *                  籃框兩點只決定原點和比例；有 opts.width、opts.height 時，比例和 'persp' 一樣扣掉
+ *                  「籃框偏離光軸、看起來比較寬」的部分（只有這一項用到焦距，影響約 3%）。
  * level = 'rim'  ：直接以兩點連線當水平（合成畫面沒有透視，用這個）
  * level = 'image'：以畫面水平當水平（手機已用水平儀放平時用），兩點取平均高度
  *
  * @param {{x:number,y:number}} front 籃框前緣（靠近投籃者）
  * @param {{x:number,y:number}} back  籃框後緣（靠近籃板）
- * @param {{level?: 'persp'|'rim'|'image', width?: number, height?: number, focal?: number}} [opts]
+ * @param {{level?: 'persp'|'vertical'|'rim'|'image', width?: number, height?: number, focal?: number,
+ *          vertical?: {top:{x:number,y:number}, bottom:{x:number,y:number}}|null}} [opts]
  */
 export function makeHoopFrame(front, back, opts = {}) {
-  let level = opts.level === 'image' ? 'image' : opts.level === 'persp' ? 'persp' : 'rim';
+  let level = opts.level === 'image' ? 'image' : opts.level === 'persp' ? 'persp' : opts.level === 'vertical' ? 'vertical' : 'rim';
   if (level === 'persp' && !(opts.width > 0 && opts.height > 0)) level = 'rim';
   const dx = back.x - front.x;
   const dy = back.y - front.y;
   const dist = Math.sqrt(dx * dx + dy * dy);
   if (!(dist > 1e-6)) return null;
   // 兩點連線相對畫面水平的夾角（度），純粹給使用者看歪了多少
-  const tiltDeg = (Math.atan2(-dy * Math.sign(dx || 1), Math.abs(dx)) * 180) / Math.PI;
+  const tiltDeg = lineTiltDeg(dx, dy);
 
   let ox, oy, ux, uy, len;
   let perspDeg = 0;
+  let vertDeg = null;
   let focal = null;
-  if (level === 'persp') {
+  if (level === 'vertical') {
+    const vt = opts.vertical;
+    if (!vt || !vt.top || !vt.bottom) return null;
+    const ex = vt.top.x - vt.bottom.x;
+    const ey = vt.top.y - vt.bottom.y;
+    const elen = Math.sqrt(ex * ex + ey * ey);
+    if (!(elen > 1e-6)) return null;
+    // 和參考線垂直的方向，取「從前緣往後緣」的那一邊
+    ux = -ey / elen;
+    uy = ex / elen;
+    let proj = ux * dx + uy * dy;
+    if (proj < 0) {
+      ux = -ux;
+      uy = -uy;
+      proj = -proj;
+    }
+    if (!(proj >= dist * Math.cos((MAX_VERTICAL_SKEW_DEG * Math.PI) / 180))) return null;
+    vertDeg = lineTiltDeg(ux, uy);
+    const cx = (front.x + back.x) / 2;
+    const cy = (front.y + back.y) / 2;
+    let xn = 0;
+    if (opts.width > 0 && opts.height > 0) {
+      focal = opts.focal > 0 ? opts.focal : FOCAL_RATIO;
+      xn = (cx - opts.width / 2) / (focal * Math.max(opts.width, opts.height));
+    }
+    // 兩點連線投影到水平方向的長度；籃框偏離光軸時看起來比較寬，同樣扣掉 √(1+xn²)
+    len = proj / Math.sqrt(1 + xn * xn);
+    ox = cx - 0.5 * len * ux;
+    oy = cy - 0.5 * len * uy;
+  } else if (level === 'persp') {
     focal = opts.focal > 0 ? opts.focal : FOCAL_RATIO;
     const f = focal * Math.max(opts.width, opts.height);
     const cx = (front.x + back.x) / 2;
@@ -86,7 +137,8 @@ export function makeHoopFrame(front, back, opts = {}) {
     ballDiameterPx: (len / RIM_DIAMETER_M) * BALL_DIAMETER_M,
     tiltDeg,
     perspDeg, // level='persp' 時扣掉的透視傾斜（度）；其他基準為 0
-    focal, // level='persp' 時用的焦距（畫面長邊的幾倍）；其他基準為 null
+    vertDeg, // level='vertical' 時，由鉛直參考線換算出來的水平相對畫面水平斜幾度（右端高為正，也就是手機歪的角度）；其他基準為 null
+    focal, // level='persp'（或 'vertical' 有給畫面大小）時用的焦距（畫面長邊的幾倍）；其他情況為 null
   };
 }
 

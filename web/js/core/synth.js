@@ -411,6 +411,15 @@ export function hoopPx(plan) {
   return { front: worldToPx(plan, 0, 0), back: worldToPx(plan, RIM_DIAMETER_M, 0) };
 }
 
+/**
+ * 一條鉛直參考線（籃板正面的中線，從籃板下緣往上到接近上緣）在畫面上的兩端。
+ * 示範模式選「垂直參考線」時，「幫我點」用它。合成畫面沒有透視、沒有歪，所以這條線在畫面上是正的。
+ */
+export function verticalPx(plan) {
+  const x = BOARD_X + 0.02;
+  return { top: worldToPx(plan, x, BOARD_Y1 - 0.05), bottom: worldToPx(plan, x, BOARD_Y0 + 0.05) };
+}
+
 /** 每一球的真實答案。 */
 export function planTruth(plan) {
   return plan.shots.map((sh, i) => ({

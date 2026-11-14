@@ -1,6 +1,6 @@
 // 示範模式的影格來源：畫面是即時畫出來的，每一球都有已知的真實角度。
 
-import { makeDemoPlan, planTruth, frameTime, hoopPx } from '../core/synth.js';
+import { makeDemoPlan, planTruth, frameTime, hoopPx, verticalPx } from '../core/synth.js';
 import { createSceneRenderer } from '../demo/scene.js';
 import { clampIndex } from './source.js';
 
@@ -13,7 +13,7 @@ function domCanvas(w, h) {
 
 /**
  * @param {object} [planOpts] makeDemoPlan 的參數
- * @returns FrameSource，另外多了 plan、truth、hoopTruth 三個示範模式專用的欄位
+ * @returns FrameSource，另外多了 plan、truth、hoopTruth、verticalTruth 四個示範模式專用的欄位
  */
 export function createSyntheticSource(planOpts = {}) {
   const plan = makeDemoPlan(planOpts);
@@ -49,6 +49,7 @@ export function createSyntheticSource(planOpts = {}) {
     plan,
     truth: planTruth(plan),
     hoopTruth: hoopPx(plan),
+    verticalTruth: verticalPx(plan), // 籃板的一條鉛直邊（「垂直參考線」基準的「幫我點」用）
 
     async getFrame(i) {
       const k = clampIndex(i, plan.frameCount);

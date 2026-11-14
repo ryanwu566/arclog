@@ -27,7 +27,7 @@ import { shotsToCsv, parseCsv } from '../web/js/core/csv.js';
 import { buildBundle, validateBundle } from '../web/js/core/bundle.js';
 import { letterbox, decodeDetections } from '../web/js/core/yolo.js';
 import {
-  makeDemoPlan, planTruth, simulateClicks, hoopPx, ballAt, frameTime, worldToPx,
+  makeDemoPlan, planTruth, simulateClicks, hoopPx, verticalPx, ballAt, frameTime, worldToPx,
 } from '../web/js/core/synth.js';
 
 const OUT = join(dirname(fileURLToPath(import.meta.url)), 'vectors');
@@ -90,9 +90,22 @@ save('prng.json', {
     { front: { x: 900, y: 240 }, back: { x: 1034.2, y: 233.1 }, level: 'persp' },
     { front: { x: 10, y: 10 }, back: { x: 10, y: 10 }, level: 'rim' }, // 兩點重合 → null
     { front: { x: 10, y: 10 }, back: { x: 10, y: 80 }, level: 'image' }, // 垂直線配 image → null
+    // 垂直參考線：籃框在畫面右上、參考線是籃板側邊（稍微斜）
+    { front: { x: 1403.5, y: 412 }, back: { x: 1538.2, y: 405.1 }, level: 'vertical', width: 1920, height: 1080, vertical: { top: { x: 1561.3, y: 300.2 }, bottom: { x: 1558.9, y: 520.6 } } },
+    // 同一條線、兩點反過來點：結果要一樣
+    { front: { x: 1403.5, y: 412 }, back: { x: 1538.2, y: 405.1 }, level: 'vertical', width: 1920, height: 1080, vertical: { top: { x: 1558.9, y: 520.6 }, bottom: { x: 1561.3, y: 300.2 } } },
+    // 投籃者在右邊；直拍並指定焦距；沒給畫面大小（不扣比例）
+    { front: { x: 400, y: 300.5 }, back: { x: 268.25, y: 306.75 }, level: 'vertical', width: 1280, height: 720, vertical: { top: { x: 240.5, y: 200 }, bottom: { x: 243.7, y: 380 } } },
+    { front: { x: 700, y: 900 }, back: { x: 815, y: 893 }, level: 'vertical', width: 1080, height: 1920, focal: 0.72, vertical: { top: { x: 850, y: 760 }, bottom: { x: 851.5, y: 980 } } },
+    { front: { x: 900, y: 240 }, back: { x: 1034.2, y: 233.1 }, level: 'vertical', vertical: { top: { x: 1060, y: 120 }, bottom: { x: 1058, y: 330 } } },
+    // 手機歪了 8 度：籃框連線和參考線一起轉
+    { front: { x: 900, y: 240 }, back: { x: 1033.7, y: 221.2 }, level: 'vertical', width: 1920, height: 1080, vertical: { top: { x: 1072.4, y: 110.3 }, bottom: { x: 1043.2, y: 318.1 } } },
+    { front: { x: 900, y: 240 }, back: { x: 1034.2, y: 233.1 }, level: 'vertical', width: 1920, height: 1080 }, // 沒有參考線 → null
+    { front: { x: 900, y: 240 }, back: { x: 1034.2, y: 233.1 }, level: 'vertical', width: 1920, height: 1080, vertical: { top: { x: 50, y: 50 }, bottom: { x: 50, y: 50 } } }, // 參考線兩點重合 → null
+    { front: { x: 900, y: 240 }, back: { x: 1034.2, y: 233.1 }, level: 'vertical', width: 1920, height: 1080, vertical: { top: { x: 900, y: 300 }, bottom: { x: 1000, y: 310 } } }, // 點到的是橫線 → null
   ];
   for (const d of defs) {
-    const frame = makeHoopFrame(d.front, d.back, { level: d.level, width: d.width, height: d.height, focal: d.focal });
+    const frame = makeHoopFrame(d.front, d.back, { level: d.level, width: d.width, height: d.height, focal: d.focal, vertical: d.vertical });
     const pts = frame
       ? [[d.front.x, d.front.y], [d.back.x, d.back.y], [123.4, 567.8], [1000, 50], [640, 360]].map(([x, y]) => {
           const [u, v] = toHoop(frame, x, y);
@@ -612,6 +625,15 @@ function oneShotPlan(o) {
     frameTimes, hoopPoints, hoop, shots, noBall: [{ from: 0, to: 5 }], synthetic: true, createdAt: '2026-11-13T00:00:00.000Z',
   });
   if (validateBundle(good).length) throw new Error('正常的標註包沒有通過檢查：' + validateBundle(good).join('；'));
+  // 同一支影片改用垂直參考線校正（籃板的鉛直邊）：多存參考線的兩點和換算出來的歪斜
+  const vp = verticalPx(plan);
+  const vertical = { top: { x: r3(vp.top.x), y: r3(vp.top.y) }, bottom: { x: r3(vp.bottom.x), y: r3(vp.bottom.y) } };
+  const vHoop = makeHoopFrame(hoopPoints.front, hoopPoints.back, { level: 'vertical', width: plan.width, height: plan.height, vertical });
+  const goodVertical = buildBundle({
+    video: { name: '合成示範.mp4', size: 123456, width: plan.width, height: plan.height, fps: plan.fps, duration: plan.duration, codec: 'avc', rotation: 0, timeSource: 'synthetic', engine: 'synthetic' },
+    frameTimes, hoopPoints: { ...hoopPoints, level: 'vertical', vertical }, hoop: vHoop, shots: shots.slice(0, 1), synthetic: true, createdAt: '2026-11-13T00:00:00.000Z',
+  });
+  if (validateBundle(goodVertical).length) throw new Error('垂直參考線的標註包沒有通過檢查：' + validateBundle(goodVertical).join('；'));
   const clone = () => JSON.parse(JSON.stringify(good));
   const bads = [
     ['format 錯', (b) => { b.format = 'something-else'; }],
@@ -628,6 +650,8 @@ function oneShotPlan(o) {
     ['沒有 frames', (b) => { b.shots[0].frames = []; }],
     ['noBall 範圍顛倒', (b) => { b.noBall = [{ from: 9, to: 3 }]; }],
     ['寬度不對', (b) => { b.video.width = 0; }],
+    ['基準是垂直參考線卻沒有參考線', (b) => { b.hoop.level = 'vertical'; }],
+    ['垂直參考線的座標不是數字', (b) => { b.hoop.level = 'vertical'; b.hoop.vertical = { top: { x: 10, y: 'abc' }, bottom: { x: 10, y: 200 } }; }],
     ['不是物件', () => null],
   ].map(([name, fn]) => {
     const b = clone();
@@ -636,7 +660,7 @@ function oneShotPlan(o) {
     return { name, bundle, expected: validateBundle(bundle) };
   });
   for (const b of bads) if (!b.expected.length) throw new Error(`壞掉的標註包「${b.name}」卻通過檢查`);
-  save('bundle.json', { good, bads });
+  save('bundle.json', { good, goodVertical, bads });
 }
 
 // ── 摘要 ────────────────────────────────────────────────────────────────────

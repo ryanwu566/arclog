@@ -51,7 +51,7 @@ test('亂數產生器可重現', () => {
 
 test('籃框座標系', () => {
   for (const c of vectors('geometry.json').cases) {
-    const frame = makeHoopFrame(c.front, c.back, { level: c.level, width: c.width, height: c.height, focal: c.focal });
+    const frame = makeHoopFrame(c.front, c.back, { level: c.level, width: c.width, height: c.height, focal: c.focal, vertical: c.vertical });
     if (c.frame === null) {
       assert.equal(frame, null);
       continue;
@@ -70,6 +70,36 @@ test('籃框座標系', () => {
   assertClose(toHoop(f, 270, 310), [1, 0], 1e-12);
   assert.ok(toHoop(f, 335, 200)[1] > 0, '畫面上方的點 v 應為正');
   assert.ok(Math.abs(f.ballDiameterPx / f.len - 0.24 / 0.45) < 1e-12, '球直徑由籃框比例推算');
+});
+
+test('籃框座標系：垂直參考線', () => {
+  const front = { x: 900, y: 240 };
+  const back = { x: 1034.2, y: 233.1 }; // 連線斜 2.9 度
+  // 參考線正好鉛直：水平就是畫面水平，和籃框連線斜不斜無關；比例是連線在水平方向的投影
+  const up = { top: { x: 1060, y: 100 }, bottom: { x: 1060, y: 330 } };
+  const fv = makeHoopFrame(front, back, { level: 'vertical', vertical: up });
+  assert.equal(fv.level, 'vertical');
+  assertClose([fv.ux, fv.uy, fv.vx, fv.vy], [1, 0, 0, -1], 1e-12);
+  assert.ok(Math.abs(fv.vertDeg) < 1e-12);
+  assert.ok(Math.abs(fv.len - 134.2) < 1e-9);
+  assert.equal(fv.focal, null, '沒給畫面大小就不扣比例，也不用焦距');
+  // 籃框中心在 (0.5, 0)
+  assertClose(toHoop(fv, (front.x + back.x) / 2, (front.y + back.y) / 2), [0.5, 0], 1e-12);
+  // 手機往右歪 4 度：參考線和水平一起轉，換算出來的歪斜就是 -4 度（右端比較低）
+  const a = (4 * Math.PI) / 180;
+  const tilted = { top: { x: 1060 + 230 * Math.sin(a), y: 330 - 230 * Math.cos(a) }, bottom: { x: 1060, y: 330 } };
+  const ft = makeHoopFrame(front, back, { level: 'vertical', vertical: tilted });
+  assert.ok(Math.abs(ft.vertDeg + 4) < 1e-9, String(ft.vertDeg));
+  // 不是鉛直的線（和籃框連線差不多平行）、少一點：不建立座標系
+  assert.equal(makeHoopFrame(front, back, { level: 'vertical', vertical: { top: { x: 900, y: 300 }, bottom: { x: 1000, y: 310 } } }), null);
+  assert.equal(makeHoopFrame(front, back, { level: 'vertical' }), null);
+  assert.equal(makeHoopFrame(front, back, { level: 'vertical', vertical: { top: front, bottom: null } }), null);
+  // 有畫面大小時，比例和「修正透視」一樣扣掉籃框偏離光軸的部分，兩種基準量到的籃框寬度一樣
+  const dims = { width: 1920, height: 1080 };
+  const fp = makeHoopFrame(front, back, { level: 'persp', ...dims });
+  const fv2 = makeHoopFrame(front, back, { level: 'vertical', ...dims, vertical: up });
+  assert.equal(fv2.focal, fp.focal);
+  assert.ok(Math.abs(fv2.len - fp.len) / fp.len < 0.005, `${fv2.len} vs ${fp.len}`);
 });
 
 test('進球判定', () => {
@@ -293,6 +323,13 @@ test('標註包：正常的通過檢查，壞掉的說得出哪裡壞', () => {
   const v = vectors('bundle.json');
   assert.deepEqual(validateBundle(v.good), []);
   assert.equal(v.good.format, BUNDLE_FORMAT);
+  // 垂直參考線校正的標註包：存了參考線的兩點，用它們重建座標系，和存下來的比例、歪斜一致
+  const gv = v.goodVertical;
+  assert.deepEqual(validateBundle(gv), []);
+  assert.equal(gv.hoop.level, 'vertical');
+  const rebuilt = makeHoopFrame(gv.hoop.front, gv.hoop.back, { level: 'vertical', width: gv.video.width, height: gv.video.height, focal: gv.hoop.focal, vertical: gv.hoop.vertical });
+  assert.ok(Math.abs(rebuilt.pxPerM - gv.hoop.pxPerM) < 0.001 && Math.abs(rebuilt.vertDeg - gv.hoop.vertDeg) < 0.001);
+  assert.equal(v.good.hoop.vertical, undefined, '其他基準不存參考線');
   for (const b of v.bads) {
     assert.deepEqual(validateBundle(b.bundle), b.expected, b.name);
     assert.ok(b.expected.length >= 1, b.name);

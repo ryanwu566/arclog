@@ -11,6 +11,9 @@
 最簡單的取得方式：在網站上載入同一支影片、完成校正，報告頁最下面會給你整行指令。
 也可以先用 --grid 輸出一張有座標格線的畫面，自己讀座標。
 
+水平基準預設是「籃框連線並修正透視」（--level persp）。在網站上改用「垂直參考線」校正時，
+指令會多出 --level vertical --vertical x1,y1,x2,y2（籃板側邊等鉛直的邊上兩點的座標）。
+
 輸出（預設放在影片旁邊）：
     <影片名>.arclog.csv      球序, 入框角度, 是否進球（可以用網站首頁的「匯入 CSV」看報告）
     <影片名>.arclog.mp4      檢查影片：每一球的片段，疊上軌跡、角度、進球判定
@@ -32,6 +35,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
+
+#: 垂直參考線和籃框（扣掉透視後）推算的手機歪斜差超過幾度就提醒（和網站 web/js/ui/session.js 的 VERTICAL_AGREE_DEG 相同）。
+VERTICAL_AGREE_DEG = 2
 
 
 def fmt_time(sec: float) -> str:
@@ -72,9 +78,12 @@ def main() -> int:
     ap.add_argument("--model", default=None, help="模型代號（models/manifest.json 裡的 id）或 .onnx 檔的路徑；預設用 manifest 的預設模型")
     ap.add_argument("--conf", type=float, default=None, help="偵測的信心門檻（預設用模型建議值）")
     ap.add_argument("--density", choices=["normal", "fine"], default="normal", help="normal：每秒看 20–30 幀；fine：每一幀都看（最多每秒 60 幀）")
-    ap.add_argument("--level", choices=["persp", "rim", "image"], default="persp",
-                    help="水平基準：persp＝籃框連線並修正透視（預設，實拍影片用）；rim＝籃框連線不修正（合成畫面用）；image＝畫面水平")
-    ap.add_argument("--focal", type=float, default=None, help="鏡頭焦距是畫面長邊的幾倍（只有 --level persp 用到；預設 0.8，也就是手機的 1 倍鏡頭）")
+    ap.add_argument("--level", choices=["persp", "vertical", "rim", "image"], default="persp",
+                    help="水平基準：persp＝籃框連線並修正透視（預設，實拍影片用）；vertical＝垂直參考線（要加 --vertical）；"
+                         "rim＝籃框連線不修正（合成畫面用）；image＝畫面水平")
+    ap.add_argument("--vertical", help="垂直參考線（籃板側邊、籃架立柱等鉛直的邊）上兩點的像素座標：x1,y1,x2,y2。只有 --level vertical 用到")
+    ap.add_argument("--focal", type=float, default=None,
+                    help="鏡頭焦距是畫面長邊的幾倍（--level persp 用來修正透視；--level vertical 只用來扣籃框比例；預設 0.8，也就是手機的 1 倍鏡頭）")
     ap.add_argument("--no-drag", action="store_true", help="關閉空氣阻力修正（純拋物線）")
     ap.add_argument("--start", type=float, default=None, help="從第幾秒開始")
     ap.add_argument("--end", type=float, default=None, help="到第幾秒結束")
@@ -118,9 +127,24 @@ def main() -> int:
         print("[X] --hoop 的格式應該是四個用逗號分開的數字，例如 --hoop 1403.5,412,1538.2,410.6")
         return 1
     hoop_points = {"front": {"x": x1, "y": y1}, "back": {"x": x2, "y": y2}}
+    vertical = None
+    if args.level == "vertical":
+        if not args.vertical:
+            print("[X] --level vertical 需要 --vertical x1,y1,x2,y2（垂直參考線上兩點的像素座標）。")
+            print("    在網站上選「垂直參考線」完成校正後，報告頁最下面的指令會包含這一段。")
+            return 1
+        try:
+            vx1, vy1, vx2, vy2 = (float(v) for v in args.vertical.replace(" ", "").split(","))
+        except ValueError:
+            print("[X] --vertical 的格式應該是四個用逗號分開的數字，例如 --vertical 1561.3,300.2,1558.9,520.6")
+            return 1
+        vertical = {"top": {"x": vx1, "y": vy1}, "bottom": {"x": vx2, "y": vy2}}
+    elif args.vertical:
+        print("  注意：只有 --level vertical 會用到 --vertical，這次忽略。")
 
     from arclog.csvio import write_csv
     from arclog.detector import BallDetector, find_model
+    from arclog.geometry import make_hoop_frame
     from arclog.pipeline import run_auto, shots_for_csv, write_overlay
     from arclog.stats import summarize
 
@@ -144,7 +168,7 @@ def main() -> int:
     t0 = time.time()
     try:
         result = run_auto(video, hoop_points, detector, level=args.level, drag=not args.no_drag, density=args.density,
-                          start=args.start, end=args.end, progress=progress, focal=args.focal)
+                          start=args.start, end=args.end, progress=progress, focal=args.focal, vertical=vertical)
     except ValueError as err:
         print(f"[X] {err}")
         return 1
@@ -154,9 +178,17 @@ def main() -> int:
     tilt = f"連線傾斜 {abs(hoop['tiltDeg']):.1f} 度"
     if hoop["level"] == "persp":
         tilt += f"（其中透視約 {abs(hoop['perspDeg']):.1f} 度，扣掉後剩 {abs(hoop['tiltDeg'] - hoop['perspDeg']):.1f} 度）"
+    elif hoop["level"] == "vertical":
+        tilt += f"；依垂直參考線，手機歪了 {abs(hoop['vertDeg']):.1f} 度（已扣掉）"
     print(f"籃框寬 {hoop['len']:.0f} 像素（每公尺 {hoop['pxPerM']:.0f} 像素），{tilt}")
     if hoop["level"] == "persp" and abs(hoop["tiltDeg"] - hoop["perspDeg"]) > 3:
         print("  注意：扣掉透視後還歪超過 3 度，可能是手機沒放平、鏡頭往上仰，或籃框座標不準；角度可能差到 1 度左右。")
+    if hoop["level"] == "vertical":
+        rim = make_hoop_frame(hoop_points["front"], hoop_points["back"], "persp", width=result["width"], height=result["height"], focal=args.focal)
+        diff = abs((rim["tiltDeg"] - rim["perspDeg"]) - hoop["vertDeg"])
+        if diff > VERTICAL_AGREE_DEG:
+            print(f"  注意：垂直參考線和籃框（扣掉透視後）推算的水平差了 {diff:.1f} 度，可能有一邊的座標不準，"
+                  "或參考線不是真的鉛直。不是用 1 倍鏡頭拍的影片也會差 1 到 2 度，這時以垂直參考線為準。")
     if hoop["len"] < 30:
         print("  注意：籃框在畫面上很小，角度會比較不準。")
     st = result["stats"]
@@ -169,7 +201,7 @@ def main() -> int:
     detail = {
         "video": video.name, "model": info["id"], "conf": conf, "level": hoop["level"], "focal": hoop["focal"], "drag": not args.no_drag,
         "width": result["width"], "height": result["height"], "fps": result["fps"], "frames": len(result["times"]),
-        "stride": result["stride"], "hoop": hoop_points, "stats": st,
+        "stride": result["stride"], "hoop": hoop_points, "vertical": vertical, "stats": st,
         "shots": [{k: s[k] for k in ("angle", "angleRaw", "crossS", "made", "madeGeometry", "madeBy", "zone", "flip", "tStart", "tEnd", "tCross",
                                      "fStart", "fEnd", "fCross", "evidence", "rms", "points")} for s in shots],
     }

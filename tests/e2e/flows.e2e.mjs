@@ -335,6 +335,68 @@ test('示範模式：校正 → 半自動標記 10 球 → 報告，角度誤差
   await context.close();
 });
 
+test('垂直參考線：依提示點籃框和一條鉛直的邊、可以拖曳調整 → 標 3 球 → 報告；標註包帶著參考線', async (t) => {
+  // 用桌面尺寸和滑鼠，點得比較準（手機的觸控操作在上一個測試已經測過）
+  const { context, page, errors } = await open({ viewport: { width: 1280, height: 860 } });
+  await page.click('#btn-demo');
+  await page.waitForSelector('#view-work:not([hidden])');
+  const hoop = await page.evaluate(() => window.__arclog.source.hoopTruth);
+  const vt = await page.evaluate(() => window.__arclog.source.verticalTruth);
+  await page.check('input[name="level"][value="vertical"]');
+  assert.match(await page.textContent('#cal-next'), /前緣/);
+  await tapImage(page, hoop.front.x + 0.6, hoop.front.y - 0.5);
+  await tapImage(page, hoop.back.x - 0.7, hoop.back.y + 0.6);
+  assert.match(await page.textContent('#cal-next'), /垂直參考線的一端/);
+  assert.equal(await page.isDisabled('#cal-done'), true, '參考線還沒點，不能進下一步');
+  // 先故意把下端點歪 8 像素，再拖回正確的位置
+  await tapImage(page, vt.top.x + 0.5, vt.top.y);
+  assert.match(await page.textContent('#cal-next'), /另一端/);
+  await tapImage(page, vt.bottom.x + 8, vt.bottom.y);
+  assert.equal(await page.isDisabled('#cal-done'), false);
+  assert.equal(await page.textContent('#cal-tilt-label'), '手機歪斜');
+  assert.match(await page.textContent('#cal-tilt'), /依垂直參考線/);
+  const skewed = await page.evaluate(() => window.__arclog.session.hoopPoints.bottom);
+  const from = await clientOf(page, skewed.x, skewed.y);
+  const to = await clientOf(page, vt.bottom.x - 0.4, vt.bottom.y);
+  await page.mouse.move(from.x, from.y);
+  await page.mouse.down();
+  await page.mouse.move(to.x, to.y, { steps: 4 });
+  await page.mouse.up();
+  const hp = await page.evaluate(() => window.__arclog.session.hoopPoints);
+  assert.ok(Math.abs(hp.bottom.x - vt.bottom.x) < 2, `下端點拖到 x=${hp.bottom.x.toFixed(1)}（應為 ${vt.bottom.x.toFixed(1)}）`);
+  assert.ok(Math.hypot(hp.front.x - hoop.front.x, hp.front.y - hoop.front.y) < 1.5, '拖參考線不會動到籃框的點');
+  assert.equal(await page.evaluate(() => window.__arclog.session.level), 'vertical');
+  await noOverflow(page, '校正（垂直參考線）');
+  await page.click('#cal-done');
+  await page.waitForSelector('#panel-mark:not([hidden])');
+
+  await demoMarkShots(page, [0, 1, 2]);
+  await page.click('#btn-export-bundle');
+  const bundle = JSON.parse((await lastDownload(page)).text);
+  assert.deepEqual(await page.evaluate(async (b) => (await import('/js/core/bundle.js')).validateBundle(b), bundle), []);
+  assert.equal(bundle.hoop.level, 'vertical');
+  assert.ok(Math.abs(bundle.hoop.vertical.top.x - vt.top.x) < 2 && Math.abs(bundle.hoop.vertical.bottom.x - vt.bottom.x) < 2);
+  assert.ok(Math.abs(bundle.hoop.vertDeg) < 1, `合成畫面沒有歪，參考線換算的歪斜 ${bundle.hoop.vertDeg} 度只來自點擊誤差`);
+
+  await page.click('#btn-to-report');
+  await page.waitForSelector('#view-report:not([hidden])');
+  const report = await page.evaluate(() => window.__arclogReport);
+  assert.equal(report.rows.length, 3);
+  const maxErr = Math.max(...report.rows.map((r) => Math.abs(r.error)));
+  t.diagnostic(`垂直參考線基準，示範 3 球：角度誤差最大 ${maxErr.toFixed(2)} 度`);
+  assert.ok(maxErr < 1.0, `角度誤差最大 ${maxErr.toFixed(2)} 度`);
+
+  // 回到校正改成其他基準：不需要參考線，可以直接進標記
+  await page.click('#nav-home'); // 報告 → 標記
+  await page.waitForSelector('#panel-mark:not([hidden])');
+  await page.click('.step[data-step="calibrate"]');
+  await page.check('input[name="level"][value="persp"]');
+  assert.match(await page.textContent('#cal-next'), /都點好了/);
+  assert.equal(await page.isDisabled('#cal-done'), false);
+  assert.deepEqual(errors, [], '頁面不應該有任何錯誤');
+  await context.close();
+});
+
 test('歷次紀錄：兩次以上會畫出趨勢圖；壞掉的備份檔不會弄壞頁面', async () => {
   const { context, page, errors } = await open();
   const mk = (id, date, player, angles) => ({ id, savedAt: `${date}T10:00:00.000Z`, date, player, note: '', videoName: '', source: 'manual', shots: angles.map((a, i) => ({ angle: a, made: i % 2 === 0 })) });

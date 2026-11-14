@@ -49,6 +49,19 @@ def validate_bundle(b) -> list[str]:
     )
     if not ok_hoop:
         errs.append("hoop.front / hoop.back 不正確")
+    if isinstance(h, dict) and h.get("level") == "vertical":
+        vt = h.get("vertical")
+        ok_vt = (
+            isinstance(vt, dict)
+            and isinstance(vt.get("top"), dict)
+            and isinstance(vt.get("bottom"), dict)
+            and _num(vt["top"].get("x"))
+            and _num(vt["top"].get("y"))
+            and _num(vt["bottom"].get("x"))
+            and _num(vt["bottom"].get("y"))
+        )
+        if not ok_vt:
+            errs.append("hoop.level 是 vertical，但 hoop.vertical（鉛直參考線的兩點）不正確")
     ball = b.get("ball")
     if not isinstance(ball, dict) or not _num(ball.get("diameterPx")) or not ball["diameterPx"] > 0:
         errs.append("ball.diameterPx 不正確")
