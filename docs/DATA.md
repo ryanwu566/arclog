@@ -139,6 +139,46 @@ repo 裡的 `data/` 也已經被 `.gitignore` 擋掉，但放在 repo 外面最�
 
 如果之後換用或加入其他資料集，請在這一節補上同樣的表格，並更新 `models/MODEL_CARD.md`。
 
+## 4b. 三類別模型（球、籃框、籃板）用的資料集
+
+2026-11-14 為了自動模式（`docs/PLAN_AUTO.md`）重新查證。**Roboflow Universe 的資料集頁面這次擋掉自動讀取（HTTP 403）**，
+所以下面的資訊來自搜尋結果、Roboflow 官方部落格和第三方頁面，**授權和類別都還沒有在資料集頁面上直接核對**。
+在核對之前不要假設它們是對的；`training/prepare_public.py` 會在下載後自己核對（見下面「程式怎麼核對」）。
+
+| | 資料集三（優先評估） | 籃板候選（擇一，未核對） |
+|---|---|---|
+| 名稱 | basketball shooting robot | detectionWithBackBoard；eventDetection |
+| 作者 | The University of Arizona | basket-ball-netyu；aibasket |
+| 網址 | https://universe.roboflow.com/the-university-of-arizona-th1yv/basketball-shooting-robot | https://universe.roboflow.com/basket-ball-netyu/detectionwithbackboard 、https://universe.roboflow.com/aibasket-fdtdk/eventdetection-vjkva |
+| 影像數 | 約 9.8k（Roboflow 部落格）；第三方頁面寫 9,612 張、17,258 個框 | 未知 |
+| 類別 | ball、rim；另有人和投籃動作的標籤（Roboflow 部落格）。**看起來沒有籃板** | 名稱或搜尋摘要裡有 backboard；eventDetection 的摘要另有 ball、player、backline、centerline（多半是轉播畫面） |
+| 授權 | 第三方頁面寫 CC BY 4.0；**未在資料集頁面核對** | eventDetection 的搜尋摘要寫 CC BY 4.0；detectionWithBackBoard 未知 |
+| 籃框框的畫法 | 未知（只框鐵圈，或連球網一起框）。下載後看預覽圖決定 `rimBox` | 未知 |
+
+搜尋來源：Roboflow 部落格〈How to Build a Local AI Basketball Shot Evaluator〉（https://roboflow.com/blog/how-to-build-an-ai-basketball-shot-evaluator ）、
+GitHub `rish-mishra/ArcVision` 的 model-v1 發布頁（第三方，引用了這個資料集的授權和數量）。
+
+### 程式怎麼核對
+
+`training/prepare_public.py --classes ball,rim,backboard` 在轉換前會：
+
+1. 讀匯出檔裡的 `README.roboflow.txt`，找 `License:` 那一行。不是 CC BY 4.0、CC0 或 Public Domain 就停下來（可以加 `--allow-license` 自己負責）。
+   讀到的授權寫進輸出資料夾的 `sources.json`，訓練出來的模型卡要照抄。
+2. 讀 `data.yaml` 的 `names`，用別名表找類別：ball（ball、basketball、sports ball）、rim（rim、hoop、basket、basketball-hoop）、
+   backboard（backboard、board）。找不到 ball 就停；資料集沒有某個類別時，記在 `sources.json` 的 `missing`，
+   之後由 `training/pseudo_label.py` 補標（補標的框另外記一份清單，不和人工標註混在一起）。
+3. 輸出固定三個類別：0 ball、1 rim、2 backboard。
+
+### 為什麼要補標
+
+Arizona 的資料集有球和籃框、沒有籃板。直接和有籃板的資料集合在一起訓練，模型會在 Arizona 的影像裡看到沒有標的籃板，
+學到「籃板是背景」。所以先用有籃板的資料訓練一個模型，再用它把 Arizona 影像裡的籃板補上（只留高信心的框），再合起來訓練。
+補標的品質一樣要看 `preview_check.jpg`。
+
+### 標示出處
+
+核對授權之後，在這裡補上正式的出處文字（和上面兩個資料集同樣的格式）。**還沒核對之前，訓練出來的模型不要公開散布。**
+
 ## 5. 模型和預訓練權重
 
 | 項目 | 來源 | 授權 |
