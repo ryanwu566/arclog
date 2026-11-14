@@ -33,6 +33,7 @@ MODELS = ROOT / "models"
 STAGE_LABELS = {
     "A": "階段 A：COCO 預訓練（sports ball 類別）",
     "B": "階段 B：公開資料集訓練",
+    "B3": "階段 B：公開資料集三類別（球、籃框、籃板；自動模式）",
     "C": "階段 C：自有資料微調",
     "synthetic": "合成資料（只用來驗證流程，不代表真實準確度）",
 }
@@ -56,13 +57,14 @@ def main() -> int:
     ap = argparse.ArgumentParser(description="匯出 ONNX 並登記到 models/manifest.json")
     ap.add_argument("--weights", required=True, help="yolo26n.pt（官方預訓練）或訓練出來的 best.pt")
     ap.add_argument("--id", required=True, help="模型代號，也是檔名，例如 arclog-ball-b-public")
-    ap.add_argument("--stage", required=True, choices=sorted(STAGE_LABELS), help="A、B、C 或 synthetic")
+    ap.add_argument("--stage", required=True, choices=sorted(STAGE_LABELS), help="A、B、B3、C 或 synthetic")
     ap.add_argument("--label", help="網站選單顯示的名稱（預設依 stage 決定）")
     ap.add_argument("--imgsz", type=int, nargs=2, default=[384, 640], metavar=("高", "寬"))
     ap.add_argument("--conf", type=float, default=None, help="建議的信心門檻（預設：階段 A 用 0.05，其餘 0.15；假偵測由軌跡邏輯濾掉，所以門檻可以設低）")
     ap.add_argument("--note", default=None, help="寫進 manifest 的補充說明（網站選模型時會顯示；--stage synthetic 沒給時自動寫上「不代表真實準確度」的提醒）")
     ap.add_argument("--data", default="", help="訓練資料來源的簡短描述（寫進 manifest）")
     ap.add_argument("--set-default", action="store_true", help="設成網站預設使用的模型")
+    ap.add_argument("--rim-box", choices=["rim", "rim+net"], default="rim", help="訓練資料的籃框框法：只框鐵圈（rim）或連球網一起框（rim+net）；看 preview_check.jpg 決定")
     ap.add_argument("--out-dir", default=str(MODELS), help="輸出目錄（預設 models/）")
     ap.add_argument("--no-sync", action="store_true", help="不要同步到 web/models/")
     args = ap.parse_args()
@@ -124,13 +126,23 @@ def main() -> int:
         "license": "AGPL-3.0",
     }
 
+    # 三類別模型：記下每一類的編號，網站依名稱對應（沒有籃框類別的模型，網站會請使用者點兩下籃框）
+    from arclog.detector import resolve_classes
+
+    found = resolve_classes(det.names)
+    if "rim" in found or "backboard" in found:
+        entry["classes"] = {k: v[0] for k, v in found.items()}
+        entry["rimBox"] = args.rim_box
+    else:
+        entry["classes"] = {"ball": class_index}
+
     manifest_path = out_dir / "manifest.json"
     if manifest_path.exists():
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     else:
         manifest = {"version": 1, "default": args.id, "models": []}
     manifest["models"] = [m for m in manifest["models"] if m["id"] != args.id] + [entry]
-    order = {"A": 0, "B": 1, "C": 2, "synthetic": 3}
+    order = {"A": 0, "B": 1, "B3": 2, "C": 3, "synthetic": 4}
     manifest["models"].sort(key=lambda m: (order.get(m["stage"], 9), m["id"]))
     if args.set_default or manifest.get("default") not in [m["id"] for m in manifest["models"]]:
         manifest["default"] = args.id

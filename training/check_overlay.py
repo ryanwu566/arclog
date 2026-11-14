@@ -27,6 +27,53 @@ sys.path.insert(0, str(ROOT))
 TILE = 224
 
 
+def multi_sheet(root: Path, manifest: dict, positives: list, rng, args) -> int:
+    """三類別資料集的拼圖：整張畫面縮小，綠＝球、橘＝籃框、藍＝籃板；補標的框畫虛線。"""
+    from PIL import Image, ImageDraw
+
+    colors = [(0, 255, 0), (255, 140, 0), (0, 200, 255)]
+    sample = rng.sample(positives, min(args.count, len(positives)))
+    cols, tw = 4, 384
+    with Image.open(root / "images" / sample[0]["file"]) as first:
+        th = int(tw * first.size[1] / first.size[0])
+    sheet = Image.new("RGB", (cols * tw, ((len(sample) + cols - 1) // cols) * th), (30, 30, 30))
+    for i, im in enumerate(sample):
+        img = Image.open(root / "images" / im["file"]).convert("RGB")
+        w, h = img.size
+        lines = (root / "labels" / im["file"]).with_suffix(".txt").read_text(encoding="utf-8").split("\n")
+        img = img.resize((tw, th), Image.BILINEAR)
+        k = tw / w
+        d = ImageDraw.Draw(img)
+        src = im.get("src", [])
+        j = 0
+        for line in lines:
+            parts = line.split()
+            if len(parts) != 5:
+                continue
+            c = int(float(parts[0]))
+            cx, cy, bw, bh = (float(v) for v in parts[1:])
+            x0, y0, x1, y1 = (cx - bw / 2) * w * k, (cy - bh / 2) * h * k, (cx + bw / 2) * w * k, (cy + bh / 2) * h * k
+            col = colors[c % len(colors)]
+            if j < len(src) and src[j] == "pseudo":
+                for t in range(int(x0), int(x1), 6):
+                    d.line([(t, y0), (min(t + 3, x1), y0)], fill=col, width=2)
+                    d.line([(t, y1), (min(t + 3, x1), y1)], fill=col, width=2)
+                for t in range(int(y0), int(y1), 6):
+                    d.line([(x0, t), (x0, min(t + 3, y1))], fill=col, width=2)
+                    d.line([(x1, t), (x1, min(t + 3, y1))], fill=col, width=2)
+            else:
+                d.rectangle([x0, y0, x1, y1], outline=col, width=2)
+            j += 1
+        d.rectangle([0, 0, tw, 15], fill=(0, 0, 0))
+        d.text((3, 2), f"{im['video'][:20]} missing:{','.join(im.get('missing', [])) or '-'}", fill=(255, 255, 255))
+        sheet.paste(img, ((i % cols) * tw, (i // cols) * th))
+    out_pos = root / f"{args.out_name}_check.jpg"
+    sheet.save(out_pos, quality=90)
+    print(f"[OK] {out_pos}（{len(sample)} 張；綠＝球、橘＝籃框、藍＝籃板；虛線是補標的框）")
+    print("     請確認：框有套在對的東西上、球是圓的；籃框的框是只框鐵圈還是連球網一起框（決定網站 manifest 的 rimBox 設定）。")
+    return 0
+
+
 def main() -> int:
     for stream in (sys.stdout, sys.stderr):
         try:
@@ -72,6 +119,11 @@ def main() -> int:
                 cx, cy, bw, bh = (float(v) for v in parts[1:])
                 out.append((cx * w, cy * h, bw * w, bh * h))
         return out
+
+    # 三類別資料集（球、籃框、籃板）：整張畫面縮小，每一類不同顏色，補標的框（pseudo）畫虛線
+    classes = manifest.get("classes") or ["basketball"]
+    if len(classes) > 1:
+        return multi_sheet(root, manifest, positives, rng, args)
 
     # ── 有球的畫面：以框為中心放大 ──
     sample = rng.sample(positives, min(args.count, len(positives)))

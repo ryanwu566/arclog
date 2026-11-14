@@ -263,3 +263,119 @@ def test_public_group_key_and_label_conversion():
     assert boxes[0] == (0.25, 0.25, 0.1, 0.1)
     assert boxes[1] == pytest.approx((0.2, 0.25, 0.2, 0.3))
     assert convert_label("", 0) == [] and convert_label("garbage\n0 1 2\n", 0) == []
+
+
+# ── 三類別（自動模式）：類別對應、授權核對、補標 ───────────────────────────────
+
+
+def test_resolve_classes_by_name():
+    from arclog.detector import resolve_classes
+
+    names = {0: "Basketball", 1: "person", 2: "Rim", 3: "shoot", 4: "back-board"}
+    assert resolve_classes(names) == {"ball": [0], "rim": [2], "backboard": [4]}
+    # 事件標籤（"made"、"ball-in-hoop"）不算；沒有籃板就不列
+    assert resolve_classes({0: "ball", 1: "hoop", 2: "made", 3: "ball-in-hoop"}) == {"ball": [0], "rim": [1]}
+
+
+def _fake_roboflow(root: Path, names: list[str], license_line: str | None, labels: dict[str, str]):
+    """做一個像 Roboflow 匯出的小資料集（YOLO 格式）。"""
+    from PIL import Image
+
+    root.mkdir(parents=True)
+    (root / "data.yaml").write_text("names:\n" + "".join(f"  - {n}\n" for n in names), encoding="utf-8")
+    if license_line is not None:
+        (root / "README.roboflow.txt").write_text(f"Some dataset\nLicense: {license_line}\n", encoding="utf-8")
+    for split in ("train", "valid"):
+        (root / split / "images").mkdir(parents=True)
+        (root / split / "labels").mkdir(parents=True)
+        for stem, text in labels.items():
+            Image.new("RGB", (64, 36), (90, 90, 90)).save(root / split / "images" / f"{stem}.jpg")
+            (root / split / "labels" / f"{stem}.txt").write_text(text, encoding="utf-8")
+
+
+def _run_prepare(args):
+    import subprocess
+
+    return subprocess.run([sys.executable, str(ROOT / "training" / "prepare_public.py"), *map(str, args)], capture_output=True, text=True, encoding="utf-8",
+                          env={**__import__("os").environ, "PYTHONUTF8": "1"})
+
+
+def test_prepare_public_three_classes_and_license(tmp_path):
+    pytest.importorskip("yaml")
+    pytest.importorskip("PIL")
+    a = tmp_path / "arizona"
+    _fake_roboflow(a, ["basketball", "person", "rim"], "CC BY 4.0", {"clipA_0001": "0 0.5 0.5 0.1 0.1\n2 0.7 0.3 0.1 0.04\n1 0.2 0.5 0.1 0.4\n", "clipA_0002": "2 0.7 0.3 0.1 0.04\n"})
+    b = tmp_path / "board"
+    _fake_roboflow(b, ["Ball", "Hoop", "Backboard"], "CC BY 4.0", {"clipB_0001": "0 0.4 0.4 0.1 0.1\n1 0.7 0.3 0.1 0.04\n2 0.72 0.2 0.12 0.2\n"})
+    out = tmp_path / "out"
+    r = _run_prepare(["--src", a, "--src", b, "--classes", "ball,rim,backboard", "--out", out])
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "0: ball" in (out / "data.yaml").read_text(encoding="utf-8") and "2: backboard" in (out / "data.yaml").read_text(encoding="utf-8")
+    import json
+
+    src = json.loads((out / "sources.json").read_text(encoding="utf-8"))
+    assert [s["missing"] for s in src["sources"]] == [["backboard"], []]
+    assert src["sources"][0]["license"] == "CC BY 4.0"
+    labels = {p.name: p.read_text(encoding="utf-8") for p in (out / "labels").rglob("*.txt")}
+    la = next(v for k, v in labels.items() if "clipA_0001" in k)
+    assert la.splitlines() == ["0 0.500000 0.500000 0.100000 0.100000", "1 0.700000 0.300000 0.100000 0.040000"]  # person 丟掉，rim 變成 1
+    lb = next(v for k, v in labels.items() if "clipB_0001" in k)
+    assert [line.split()[0] for line in lb.splitlines()] == ["0", "1", "2"]
+    assert "pseudo_label.py" in r.stdout
+
+    # 授權不在允許清單：停下來；加 --allow-license 才繼续
+    c = tmp_path / "nc"
+    _fake_roboflow(c, ["ball", "rim"], "CC BY-NC 4.0", {"x_1": "0 0.5 0.5 0.1 0.1\n"})
+    r2 = _run_prepare(["--src", c, "--classes", "ball,rim,backboard", "--out", tmp_path / "out2"])
+    assert r2.returncode == 1 and "CC BY-NC 4.0" in r2.stdout
+    d = tmp_path / "nolicense"
+    _fake_roboflow(d, ["ball", "rim"], None, {"x_1": "0 0.5 0.5 0.1 0.1\n"})
+    assert _run_prepare(["--src", d, "--classes", "ball,rim,backboard", "--out", tmp_path / "out3"]).returncode == 1
+    assert _run_prepare(["--src", d, "--classes", "ball,rim,backboard", "--out", tmp_path / "out3", "--allow-license", "--clean"]).returncode == 0
+
+
+def test_license_parsing():
+    from prepare_public import license_ok
+
+    assert license_ok("CC BY 4.0") and license_ok("Public Domain") and license_ok("CC0 1.0")
+    assert not license_ok("CC BY-NC 4.0") and not license_ok("Private") and not license_ok(None)
+
+
+def test_pseudo_label_fills_only_missing_and_can_undo(tmp_path):
+    pytest.importorskip("yaml")
+    pytest.importorskip("PIL")
+    import json
+
+    from pseudo_label import fill_missing, undo
+
+    a = tmp_path / "arizona"
+    _fake_roboflow(a, ["basketball", "rim"], "CC BY 4.0", {"clipA_0001": "0 0.5 0.5 0.1 0.1\n1 0.7 0.3 0.1 0.04\n"})
+    b = tmp_path / "board"
+    _fake_roboflow(b, ["ball", "rim", "backboard"], "CC BY 4.0", {"clipB_0001": "0 0.4 0.4 0.1 0.1\n2 0.72 0.2 0.12 0.2\n"})
+    out = tmp_path / "out"
+    assert _run_prepare(["--src", a, "--src", b, "--classes", "ball,rim,backboard", "--out", out]).returncode == 0
+    before = {p.name: p.read_text(encoding="utf-8") for p in (out / "labels").rglob("*.txt")}
+    calls = []
+
+    def predict(path):
+        calls.append(path.name)
+        # 一個高信心的籃板、一個低信心的籃板、一顆球（球不在缺標清單裡，不可以補）
+        return [("backboard", 0.7, 0.2, 0.12, 0.2, 0.9), ("backboard", 0.1, 0.1, 0.1, 0.1, 0.2), ("ball", 0.1, 0.9, 0.05, 0.05, 0.99)]
+
+    res = fill_missing(out, predict, ["backboard"], conf=0.5)
+    assert all("arizona" in n for n in calls), "只看缺籃板的那個來源的影像"
+    assert res["added"] == {"backboard": res["images"]} and res["images"] >= 1
+    after = {p.name: p.read_text(encoding="utf-8") for p in (out / "labels").rglob("*.txt")}
+    for name, text in after.items():
+        if "arizona" in name:
+            assert text.splitlines()[-1].startswith("2 0.700000") and text.count("\n2 ") + text.startswith("2 ") == 1
+        else:
+            assert text == before[name], "有完整標註的影像不可以動"
+    man = json.loads((out / "manifest.json").read_text(encoding="utf-8"))
+    assert all(not im.get("missing") for im in man["images"])
+    assert json.loads((out / "pseudo_labels.json").read_text(encoding="utf-8"))["records"][0]["cls"] == "backboard"
+    # 撤銷：標註回到原樣
+    assert undo(out) == res["images"]
+    assert {p.name: p.read_text(encoding="utf-8") for p in (out / "labels").rglob("*.txt")} == before
+    man = json.loads((out / "manifest.json").read_text(encoding="utf-8"))
+    assert any(im.get("missing") == ["backboard"] for im in man["images"])

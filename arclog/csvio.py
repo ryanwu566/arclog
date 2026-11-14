@@ -17,8 +17,12 @@ def shots_to_csv(shots: list[dict]) -> str:
     lines = [",".join(CSV_HEADER)]
     for i, s in enumerate(shots):
         # 角度本來就記到小數一位；這裡的進位方式和 constants.round_angle 相同
-        a = math.floor(float(s["angle"]) * 10 + 0.5) / 10
         made = "是" if s["made"] else "否"
+        # 鏡頭角度太偏時（自動模式的 C 級）沒有入框角度，這一格留空
+        if s.get("angle") is None:
+            lines.append(f"{i + 1},,{made}")
+            continue
+        a = math.floor(float(s["angle"]) * 10 + 0.5) / 10
         lines.append(f"{i + 1},{a:.1f},{made}")
     return "\r\n".join(lines) + "\r\n"
 
@@ -122,9 +126,13 @@ def parse_csv(text: str) -> dict:
     parsed = []
     for i, r in enumerate(rows):
         line_no = i + 1 + (1 if has_header else 0)
-        angle = _to_number(r[col["angle"]] if col["angle"] < len(r) else "")
+        cell = r[col["angle"]] if col["angle"] < len(r) else ""
+        angle = _to_number(cell)
         made = _parse_made(r[col["made"]] if col["made"] < len(r) else "")
-        if not math.isfinite(angle) or angle <= 0 or angle >= 90:
+        blank = cell.strip() == "" and col["angle"] < len(r)
+        if blank:
+            angle = None  # 角度留空：這一球只有進或沒進（自動模式偏角太大時）
+        elif not math.isfinite(angle) or angle <= 0 or angle >= 90:
             warnings.append(f"第 {line_no} 列的入框角度看不懂，已略過")
             continue
         if made is None:

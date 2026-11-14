@@ -134,3 +134,30 @@ export function rgbaToChw(rgba, w, h, out) {
   }
   return dst;
 }
+
+/** 多類別模型預設每幀每類最多留幾個框：球可能有好幾顆（別人的球），籃框和籃板通常一兩個。 */
+export const MULTI_MAX_DET = { ball: 12, rim: 4, backboard: 4 };
+
+/**
+ * 一次解出好幾個類別（自動模式的三類別模型：球、籃框、籃板）。每個類別各自做 NMS。
+ *
+ * @param {ArrayLike<number>} data
+ * @param {number[]} dims
+ * @param {object} opts
+ * @param {Object<string, number>} opts.classes 類別名稱 → 類別編號，例如 {ball: 0, rim: 1, backboard: 2}
+ * @param {number|Object<string, number>} [opts.conf] 信心門檻；可以每個類別不同
+ * @param {Object<string, number>} [opts.maxDet] 每個類別最多留幾個（預設 MULTI_MAX_DET，沒列到的 8）
+ * @param {number} [opts.iou=0.5]
+ * @param {object} [opts.lb]
+ * @returns {{cls:string, x:number, y:number, w:number, h:number, conf:number}[]} 依 classes 的鍵的順序排列
+ */
+export function decodeMulti(data, dims, opts) {
+  const out = [];
+  for (const name of Object.keys(opts.classes)) {
+    const conf = typeof opts.conf === 'object' && opts.conf ? opts.conf[name] : opts.conf;
+    const maxDet = (opts.maxDet && opts.maxDet[name]) || MULTI_MAX_DET[name] || 8;
+    const dets = decodeDetections(data, dims, { classIndex: opts.classes[name], conf, iou: opts.iou, maxDet, lb: opts.lb });
+    for (const d of dets) out.push({ cls: name, ...d });
+  }
+  return out;
+}

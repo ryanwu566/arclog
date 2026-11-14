@@ -25,7 +25,7 @@ import { summarize, plainSummary } from '../web/js/core/stats.js';
 import { interpolateShot } from '../web/js/core/interp.js';
 import { shotsToCsv, parseCsv } from '../web/js/core/csv.js';
 import { buildBundle, validateBundle } from '../web/js/core/bundle.js';
-import { letterbox, decodeDetections } from '../web/js/core/yolo.js';
+import { letterbox, decodeDetections, decodeMulti } from '../web/js/core/yolo.js';
 import {
   makeDemoPlan, planTruth, simulateClicks, hoopPx, verticalPx, ballAt, frameTime, worldToPx,
 } from '../web/js/core/synth.js';
@@ -546,7 +546,13 @@ function oneShotPlan(o) {
   for (const c of cases.slice(0, 8)) {
     if (JSON.stringify(c.expected.shots) !== JSON.stringify(shots)) throw new Error(`CSV 案例「${c.name}」解析結果不對：${JSON.stringify(c.expected)}`);
   }
-  if (cases[8].expected.shots.length !== 2 || cases[8].expected.warnings.length !== 6) throw new Error(`壞列案例不符：${JSON.stringify(cases[8].expected)}`);
+  // 第 5 列「5,,是」：角度留空是合法的（自動模式偏角太大時只記進或沒進），所以有 3 球、5 個警告
+  if (cases[8].expected.shots.length !== 3 || cases[8].expected.warnings.length !== 5 || cases[8].expected.shots[1].angle !== null) throw new Error(`壞列案例不符：${JSON.stringify(cases[8].expected)}`);
+  // 角度留空的匯出再匯入
+  const noAngle = [{ angle: 44.3, made: true }, { angle: null, made: false }, { angle: null, made: true }];
+  const noAngleText = shotsToCsv(noAngle);
+  if (JSON.stringify(parseCsv(noAngleText).shots) !== JSON.stringify(noAngle)) throw new Error('角度留空的 CSV 匯出再匯入不一致');
+  cases.push({ name: '角度留空（只有進或沒進）', text: noAngleText, expected: parseCsv(noAngleText) });
   save('csv.json', { shots, text, cases });
 }
 
@@ -605,7 +611,14 @@ function oneShotPlan(o) {
     { classIndex: 1, conf: 0.15, iou: 0.5, maxDet: 8, lb },
     { classIndex: 2, conf: 0.15, iou: 0.5, maxDet: 8, lb },
   ].map((o) => ({ opts: o, expected: decodeDetections(new Float32Array(one), [1, 8, 6], { ...o, lb: o.lb || undefined }) }));
-  save('yolo.json', { letterbox: lbs, many: { dims: [1, 7, N], data: many, cases: decodeMany }, one: { dims: [1, 8, 6], data: one, cases: decodeOne } });
+  // 多類別：三個類別一起解，每類各自 NMS；門檻可以每類不同
+  const multi = [
+    { classes: { ball: 0, rim: 1, backboard: 2 }, conf: 0.15, iou: 0.5, lb },
+    { classes: { ball: 0, rim: 1, backboard: 2 }, conf: { ball: 0.05, rim: 0.45, backboard: 0.5 }, iou: 0.5, maxDet: { ball: 2, rim: 1 }, lb },
+    { classes: { ball: 0 }, conf: 0.25, iou: 0.5, lb: null },
+  ].map((o) => ({ opts: o, expected: decodeMulti(new Float32Array(many), [1, 7, N], { ...o, lb: o.lb || undefined }) }));
+  const multiOne = decodeMulti(new Float32Array(one), [1, 8, 6], { classes: { ball: 0, rim: 1, backboard: 2 }, conf: 0.15, iou: 0.5, lb });
+  save('yolo.json', { letterbox: lbs, many: { dims: [1, 7, N], data: many, cases: decodeMany, multi }, one: { dims: [1, 8, 6], data: one, cases: decodeOne, multi: multiOne } });
 }
 
 // ── 標註包 ──────────────────────────────────────────────────────────────────

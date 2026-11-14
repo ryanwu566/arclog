@@ -126,3 +126,22 @@ def decode_detections(
             h /= lb["scale"]
         out.append({"x": x, "y": y, "w": w, "h": h, "conf": k["conf"]})
     return out
+
+
+# 多類別模型預設每幀每類最多留幾個框。對應 yolo.js 的 MULTI_MAX_DET。
+MULTI_MAX_DET = {"ball": 12, "rim": 4, "backboard": 4}
+
+
+def decode_multi(data, dims, classes: dict, conf=0.15, iou: float = 0.5, max_det: dict | None = None, lb: dict | None = None) -> list[dict]:
+    """一次解出好幾個類別（球、籃框、籃板），每個類別各自 NMS。對應 yolo.js 的 decodeMulti。
+
+    classes：類別名稱 → 編號（依這個 dict 的順序輸出）；conf 可以是數字或 {名稱: 門檻}。
+    回傳 [{'cls','x','y','w','h','conf'}]。
+    """
+    out = []
+    for name, idx in classes.items():
+        c = conf.get(name, 0.15) if isinstance(conf, dict) else conf
+        m = (max_det or {}).get(name) or MULTI_MAX_DET.get(name) or 8
+        for d in decode_detections(data, dims, class_index=int(idx), conf=c, iou=iou, max_det=m, lb=lb):
+            out.append({"cls": name, **d})
+    return out

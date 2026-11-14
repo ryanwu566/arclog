@@ -21,7 +21,7 @@ from arclog.prng import mulberry32, rand_int, rand_normal
 from arclog.shot import analyze_shot, judge_make, sample_arc
 from arclog.stats import summarize
 from arclog.track import find_shots, mark_static
-from arclog.yolo import decode_detections, letterbox
+from arclog.yolo import decode_detections, decode_multi, letterbox
 from conftest import assert_close, vectors
 
 TOL = 1e-6  # JS 和 Python 的數值差容許值
@@ -218,6 +218,15 @@ def test_yolo_pre_and_post_processing():
             # numpy 陣列和一般 list 兩種輸入都要得到一樣的結果
             assert_close(decode_detections(data, v[group]["dims"], **kw), c["expected"], 1e-9, group)
             assert_close(decode_detections([float(x) for x in data], v[group]["dims"], **kw), c["expected"], 1e-9, group)
+    many = np.array(v["many"]["data"], dtype=np.float32)
+    for c in v["many"]["multi"]:
+        o = c["opts"]
+        got = decode_multi(many, v["many"]["dims"], o["classes"], conf=o["conf"], iou=o["iou"], max_det=o.get("maxDet"), lb=o["lb"])
+        assert [g["cls"] for g in got] == [e["cls"] for e in c["expected"]]
+        assert_close(got, c["expected"], 1e-9, "multi")
+    one = np.array(v["one"]["data"], dtype=np.float32)
+    got = decode_multi(one, v["one"]["dims"], {"ball": 0, "rim": 1, "backboard": 2}, conf=0.15, iou=0.5, lb=v["many"]["multi"][0]["opts"]["lb"])
+    assert_close(got, v["one"]["multi"], 1e-9, "multi-one")
     assert letterbox(1920, 1080, 640, 384) == {"scale": 1 / 3, "newW": 640, "newH": 360, "padX": 0, "padY": 12}
     with pytest.raises(ValueError):
         decode_detections([320, 192, 24, 24, 0.9], [1, 5, 1], class_index=3)
