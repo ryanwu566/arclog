@@ -15,7 +15,7 @@ import re
 import subprocess
 import sys
 
-VIDEO_EXT = {".mp4", ".mov", ".m4v", ".avi", ".mkv", ".webm", ".3gp", ".mts"}
+VIDEO_EXT = {".mp4", ".mov", ".m4v", ".avi", ".mkv", ".webm", ".3gp", ".mts", ".y4m"}
 IMAGE_EXT = {".jpg", ".jpeg", ".png", ".heic", ".heif", ".bmp", ".gif", ".webp", ".tif", ".tiff"}
 WEIGHT_EXT = {".pt", ".pth", ".engine", ".torchscript", ".safetensors"}
 

@@ -88,6 +88,7 @@ export function scatterChart(p) {
   let lo = ref;
   let hi = ref;
   for (const r of rows) {
+    if (typeof r.angle !== 'number') continue; // 沒有角度的球（鏡頭偏角太大）不畫點
     if (r.angle < lo) lo = r.angle;
     if (r.angle > hi) hi = r.angle;
   }
@@ -155,6 +156,7 @@ export function scatterChart(p) {
   const points = [];
   for (let i = 0; i < n; i++) {
     const r = rows[i];
+    if (typeof r.angle !== 'number') continue;
     const x = xOf(i);
     const y = yOf(r.angle);
     points.push({ n: r.n, x, y, angle: r.angle, made: r.made });

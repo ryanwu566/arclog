@@ -67,6 +67,7 @@ const lastDownload = (page) =>
 
 /** 示範模式：校正（點真實的籃框位置，各偏 1 像素）。 */
 async function demoCalibrate(page) {
+  await page.click('#home-advanced summary');
   await page.click('#btn-demo');
   await page.waitForSelector('#view-work:not([hidden])');
   const hoop = await page.evaluate(() => window.__arclog.source.hoopTruth);
@@ -98,6 +99,7 @@ test('示範模式：校正 → 半自動標記 10 球 → 報告，角度誤差
   assert.match(await page.textContent('.privacy'), /不會上傳/);
 
   // ── 校正 ──
+  await page.click('#home-advanced summary');
   await page.click('#btn-demo');
   await page.waitForSelector('#view-work:not([hidden])');
   assert.equal(await page.isVisible('#demo-banner'), true, '示範模式要清楚標示');
@@ -338,6 +340,7 @@ test('示範模式：校正 → 半自動標記 10 球 → 報告，角度誤差
 test('垂直參考線：依提示點籃框和一條鉛直的邊、可以拖曳調整 → 標 3 球 → 報告；標註包帶著參考線', async (t) => {
   // 用桌面尺寸和滑鼠，點得比較準（手機的觸控操作在上一個測試已經測過）
   const { context, page, errors } = await open({ viewport: { width: 1280, height: 860 } });
+  await page.click('#home-advanced summary');
   await page.click('#btn-demo');
   await page.waitForSelector('#view-work:not([hidden])');
   const hoop = await page.evaluate(() => window.__arclog.source.hoopTruth);

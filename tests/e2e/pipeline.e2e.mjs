@@ -32,6 +32,7 @@ after(async () => {
 });
 
 async function demoAtAuto(page, frame = null) {
+  await page.click('#home-advanced summary');
   await page.click('#btn-demo');
   await page.waitForSelector('#view-work:not([hidden])');
   await page.click('#cal-demo');

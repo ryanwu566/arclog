@@ -15,6 +15,11 @@ import { pathToFileURL } from 'node:url';
 import { makeHoopFrame, toHoop } from '../web/js/core/geometry.js';
 import { analyzeShot } from '../web/js/core/shot.js';
 import { DRAG_K_PER_M, DRAG_K_RIM } from '../web/js/core/constants.js';
+import { makeScene3d, scene3dTruth, rimClickTruth } from '../web/js/core/synth3d.js';
+import { simulateDetections } from '../web/js/core/simdetect.js';
+import { analyzeAuto } from '../web/js/core/autoshots.js';
+import { fitPose } from '../web/js/core/viewangle.js';
+import { autoCalibrate } from '../web/js/core/autocal.js';
 
 export const RIM_H = 3.05; // 籃框高度（公尺）
 export const RIM_R = 0.225; // 籃框內半徑
@@ -226,6 +231,127 @@ export function yawFormula(trueDeg, thetaDeg) {
   return (Math.atan(Math.tan((trueDeg * Math.PI) / 180) / Math.cos((thetaDeg * Math.PI) / 180)) * 180) / Math.PI;
 }
 
+// ── 自動模式（第十四到十七段）：3D 合成場景＋模擬偵測器，量鏡頭角度估計和分級後的誤差 ──────────
+//
+// 和前面各段一樣是模擬，不是實拍。偵測框的雜訊大小（simdetect.js 的 SIMDET_DEFAULTS）是假設的。
+
+/** 一次自動分析對真實答案的比較。cam：makeCamera 的參數；focalRatio：程式「以為」的焦距。 */
+export function autoTrial({ camera, seed = 1, focalRatio, script, background = false, detOpts = {}, gradeLimits, taps = false, shotYawDeg = 0 }) {
+  const plan = makeScene3d({ seed, camera: { dist: 9, camHeight: 1.6, pitchDeg: 3, ...camera }, script, background, shotYawDeg });
+  let dets = simulateDetections(plan, { seed: seed * 7 + 1, ...detOpts });
+  let hoopPoints;
+  if (taps) {
+    // 模型沒有籃框類別：使用者點兩下籃框（點在鐵圈內緣橢圓的最左、最右，各有 1 像素的誤差）
+    const c = rimClickTruth(plan);
+    hoopPoints = { front: { x: c.left.x + 0.7, y: c.left.y - 0.7 }, back: { x: c.right.x - 0.7, y: c.right.y + 0.7 } };
+    dets = dets.filter((d) => d.cls === 'ball');
+  }
+  const res = analyzeAuto(dets, { width: plan.width, height: plan.height, focalRatio, gradeLimits, hoopPoints });
+  const truth = scene3dTruth(plan);
+  const c = plan.cam;
+  const alphaTrue = (Math.atan2(-c.along, c.z) * 180) / Math.PI;
+  const out = { alphaTrue, devTrue: Math.abs(alphaTrue), ok: res.ok, mode: res.mode, grade: res.view ? res.view.grade : null, devEst: res.view ? res.view.devDeg : null, devRange: res.view ? res.view.devRange : null, found: 0, missed: 0, extra: 0, madeWrong: 0, errs: [], madeErrs: [] };
+  if (!res.ok) return out;
+  for (const t of truth) {
+    const s = res.shots.find((x) => Math.abs(x.tCross - t.tCross) < 0.35);
+    if (!s) {
+      out.missed++;
+      continue;
+    }
+    out.found++;
+    if (s.made !== t.made) out.madeWrong++;
+    if (s.angle != null) {
+      out.errs.push(s.angle - t.angleDeg);
+      if (t.made) out.madeErrs.push(s.angle - t.angleDeg);
+    }
+  }
+  out.extra = res.shots.filter((s) => !truth.some((t) => Math.abs(s.tCross - t.tCross) < 0.35)).length;
+  return out;
+}
+
+/** 只估偏角（不跑分球）：用模擬偵測器 60 幀的籃框、籃板框。 */
+export function poseTrial({ camera, seed = 1, focalRatio }) {
+  const plan = makeScene3d({ seed, camera: { dist: 9, camHeight: 1.6, pitchDeg: 3, ...camera }, script: ['swish'] });
+  const dets = simulateDetections(plan, { seed: seed * 13 + 5 }).filter((d) => d.f < 60);
+  const cal = autoCalibrate(dets);
+  const c = plan.cam;
+  const alphaTrue = (Math.atan2(-c.along, c.z) * 180) / Math.PI;
+  if (!cal.ok || !cal.board) return { alphaTrue, devEst: null };
+  const r = fitPose(cal.rim.box, cal.board.box, { width: plan.width, height: plan.height, focalRatio });
+  return { alphaTrue, devTrue: Math.abs(alphaTrue), devEst: r.devDeg, devRange: r.devRange };
+}
+
+const pctl = (a, q) => {
+  if (!a.length) return NaN;
+  const s = a.slice().sort((x, y) => x - y);
+  return s[Math.min(s.length - 1, Math.floor(q * (s.length - 1) + 0.5))];
+};
+
+/** 第十五段：每個相機位置跑 seeds 次，統計角度誤差和分球、進球判定。 */
+export function autoSweep(thetas, seeds, extra = {}) {
+  const rows = [];
+  for (const thetaDeg of thetas) {
+    const trials = [];
+    for (let k = 1; k <= seeds; k++) trials.push(autoTrial({ camera: { thetaDeg, ...(extra.camera || {}) }, seed: k, focalRatio: extra.focalRatio, background: extra.background, script: extra.script, gradeLimits: extra.gradeLimits, taps: extra.taps, shotYawDeg: extra.shotYawDeg }));
+    const errs = trials.flatMap((t) => t.madeErrs.map(Math.abs));
+    const all = trials.flatMap((t) => t.errs.map(Math.abs));
+    rows.push({
+      thetaDeg,
+      devTrue: trials[0].devTrue,
+      grades: trials.map((t) => t.grade).join(''),
+      devEst: trials.map((t) => t.devEst),
+      madeP90: pctl(errs, 0.9),
+      madeMax: errs.length ? Math.max(...errs) : NaN,
+      allP90: pctl(all, 0.9),
+      allMax: all.length ? Math.max(...all) : NaN,
+      shots: trials.reduce((a, t) => a + t.found + t.missed, 0),
+      missed: trials.reduce((a, t) => a + t.missed, 0),
+      extra: trials.reduce((a, t) => a + t.extra, 0),
+      madeWrong: trials.reduce((a, t) => a + t.madeWrong, 0),
+      angles: errs.length,
+    });
+  }
+  return rows;
+}
+
+function autoSections() {
+  const f1 = (v) => (Number.isFinite(v) ? v.toFixed(1) : '—');
+  const thetas = [20, 10, 0, -10, -20, -30, -40, -50, -60, -70, -80, -90];
+  console.log('十四、自動判斷鏡頭角度：籃框和籃板的偵測框（模擬偵測器，60 幀取穩定值）推算的偏角，和真實偏角比較（度）');
+  console.log('  偏角是「從籃框看過去」相機偏離正側面的角度；θ 是相機繞出手點和籃框中間轉了幾度（正＝往底線那一側）。');
+  console.log('  焦距：程式假設畫面長邊的 0.8 倍；後兩欄是實際焦距 0.7、0.9 倍（程式不知道）時的估計。');
+  for (const thetaDeg of thetas) {
+    const cols = [0.8, 0.7, 0.9].map((fr) => {
+      const est = [1, 2, 3, 4, 5].map((seed) => poseTrial({ camera: { thetaDeg, focalRatio: fr }, seed, focalRatio: 0.8 }));
+      return est;
+    });
+    const t = cols[0][0];
+    const fmtE = (arr) => arr.map((e) => (e.devEst == null ? '—' : (e.devEst - e.devTrue >= 0 ? '+' : '') + (e.devEst - e.devTrue).toFixed(1))).join(' ');
+    console.log(`  θ = ${String(thetaDeg).padStart(3)}（偏角 ${f1(t.devTrue).padStart(4)}）  焦距相同 ${fmtE(cols[0])}   0.7 倍 ${fmtE(cols[1])}   0.9 倍 ${fmtE(cols[2])}`);
+  }
+  console.log('');
+
+  const show = (title, rows) => {
+    console.log(title);
+    console.log('  θ      偏角   分級     進球的角度誤差 p90／最大   全部的 p90／最大   漏／多／判錯（共幾球）');
+    for (const r of rows) {
+      console.log(`  ${String(r.thetaDeg).padStart(4)}  ${f1(r.devTrue).padStart(5)}   ${r.grades.padEnd(6)}   ${f1(r.madeP90).padStart(5)} ／${f1(r.madeMax).padStart(5)}          ${f1(r.allP90).padStart(5)} ／${f1(r.allMax).padStart(5)}      ${r.missed}／${r.extra}／${r.madeWrong}（${r.shots}）`);
+    }
+    console.log('');
+  };
+  show('十五、自動模式整條流程（每個位置 5 段、每段 10 球：空心、擦框進出、麵包球、從旁邊和後面經過），焦距假設正確', autoSweep(thetas, 5));
+  show('十六、同上，但實際焦距是 0.7 倍（程式以為 0.8）', autoSweep([0, -20, -40, -60], 5, { camera: { focalRatio: 0.7 } }));
+  show('    同上，實際焦距 0.9 倍', autoSweep([0, -20, -40, -60], 5, { camera: { focalRatio: 0.9 } }));
+  show('    同上，焦距正確、背景有另一個籃框在投籃、有人運球和傳球', autoSweep([0, -30, -50, -70, -90], 3, { background: true }));
+  show('    同上，手機歪 3 度、鏡頭仰 8 度', autoSweep([0, -30, -50], 3, { camera: { rollDeg: 3, pitchDeg: 8 } }));
+  show('    同上，手機歪 −5 度', autoSweep([0, -30], 3, { camera: { rollDeg: -5 } }));
+  const offset = ['swish', 'offset', 'swish', 'offset', 'swish', 'offset', 'swish', 'offset'];
+  show('    進球但左右偏了約 9 公分（球心離開投籃平面）：每段 8 球，一半偏', autoSweep([0, -20, -40, -55], 3, { script: offset }));
+  show('    投籃方向和籃板不垂直 8 度（從側翼投；程式假設投籃方向垂直籃板）', autoSweep([0, -10, -20, -30, -40, -55], 3, { shotYawDeg: 8 }));
+  show('十七、如果 60 度以上也照樣換到投籃平面算角度（不分 C 級）：為什麼 C 級不給角度', autoSweep([-50, -60, -70, -80], 3, { gradeLimits: { A: 30, B: 95 } }));
+  show('十八、模型沒有籃框、籃板類別（使用者點兩下籃框）：偏角只能由球的大小變化粗估，A、B 級用 tan(真) = tan(量)·cos θ 修正', autoSweep([10, 0, -10, -20, -30, -40, -50, -70, -90], 3, { taps: true }));
+}
+
 function main() {
   const fmt = (v) => (Number.isFinite(v) ? (v >= 0 ? '+' : '') + v.toFixed(2) : '  —  ');
   const shots = [50, 54, 58].map((launch) => designShot(launch));
@@ -332,4 +458,13 @@ function main() {
   }
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) main();
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  if (process.argv.includes('--auto')) autoSections();
+  else {
+    main();
+    if (!process.argv.includes('--classic')) {
+      console.log('');
+      autoSections();
+    }
+  }
+}

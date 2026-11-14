@@ -22,6 +22,11 @@ export function normalizeRecord(r) {
   const shots = [];
   for (const s of r.shots) {
     if (!s || typeof s.made !== 'boolean') return null;
+    // 角度可以是 null：自動模式偏角太大（C 級）時只記進或沒進
+    if (s.angle === null) {
+      shots.push({ angle: null, made: s.made });
+      continue;
+    }
     const a = Number(s.angle);
     if (!Number.isFinite(a) || a <= 0 || a >= 90) return null;
     shots.push({ angle: a, made: s.made });

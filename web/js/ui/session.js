@@ -37,7 +37,26 @@ export function createSession(o) {
     truth: o.truth || null,
     undo: [],
     nextShotId: 1,
+    // 自動分析的摘要（鏡頭角度等級、偏角、模式）；手動標記的練習是 null
+    auto: null,
   };
+}
+
+/**
+ * 自動分析的球：角度是在「投籃平面」上算的（或偏角太大時沒有角度），校正改了也不重算，
+ * 除非使用者按「修正」重新標點（那時會變成手動標記的球）。
+ */
+export function isFixedAuto(shot) {
+  return shot.source === 'auto' && !!shot.auto && !!shot.auto.mode;
+}
+
+/** 放進自動分析的結果（pipeline.js 的 shotsFromResult、autoSummary）。 */
+export function setAutoResult(s, shots, summary, hoopPoints) {
+  remember(s);
+  s.shots = shots.map((x, i) => ({ ...x, id: i + 1 }));
+  s.nextShotId = s.shots.length + 1;
+  s.auto = summary;
+  if (hoopPoints && hoopPoints.front && hoopPoints.back) s.hoopPoints = { ...emptyHoopPoints(), front: { ...hoopPoints.front }, back: { ...hoopPoints.back } };
 }
 
 // ── 復原 ──
@@ -65,7 +84,8 @@ function emptyHoopPoints() {
 
 // 修正透視（和垂直參考線的籃框比例）要知道畫面大小。只有實拍影片才給：
 // 示範模式的合成畫面沒有透視，不給的話 'persp' 會自動當成 'rim'，'vertical' 也不扣比例，結果才是對的。
-const dims = (s) => (s.mode === 'video' && s.info ? { width: s.info.width, height: s.info.height } : {});
+// 3D 合成示範和相機錄影也有透視（info.perspective）。
+const dims = (s) => ((s.mode === 'video' || (s.info && s.info.perspective)) && s.info ? { width: s.info.width, height: s.info.height } : {});
 
 export function hoopFrame(s) {
   const { front, back, top, bottom } = s.hoopPoints;
@@ -148,6 +168,37 @@ export function hoopWarnings(s) {
     out.push(`兩點連線歪了 ${Math.abs(hoop.tiltDeg).toFixed(1)} 度。請確認兩點是不是都點在籃框的同一個高度，或手機有沒有放平。`);
   }
   if (s.info && hoop.len > s.info.width * 0.5) out.push('籃框寬度超過半個畫面，請確認點的是籃框的前緣和後緣。');
+  return out.concat(calibrationSanity(s));
+}
+
+/**
+ * 點的位置明顯不合理時的提醒（看示意圖重點）：
+ *   兩點幾乎上下對齊（籃框前後緣應該左右排列）、兩點高度差很多、點在畫面最下面（多半是地板）、
+ *   垂直參考線歪很多（不是鉛直的邊）、自動找到的籃框和點的位置差很遠。
+ */
+export function calibrationSanity(s) {
+  const out = [];
+  const { front, back, top, bottom } = s.hoopPoints;
+  if (!front || !back) return out;
+  const dx = back.x - front.x;
+  const dy = back.y - front.y;
+  const W = s.info && s.info.width ? s.info.width : null;
+  const H = s.info && s.info.height ? s.info.height : null;
+  if (Math.abs(dy) > Math.abs(dx)) out.push('兩點幾乎是上下排列的。籃框的前緣和後緣應該是左右兩端（看上面的示意圖），請重新點。');
+  else if (Math.abs(dx) > 1 && Math.abs(dy) / Math.abs(dx) > Math.tan((15 * Math.PI) / 180)) out.push(`兩點的高度差了 ${Math.round(Math.abs(dy))} 像素（連線斜了 ${Math.round((Math.atan2(Math.abs(dy), Math.abs(dx)) * 180) / Math.PI)} 度）。前緣和後緣要點在籃框鐵圈同一個高度，不要點到球網。`);
+  if (H && Math.min(front.y, back.y) > 0.8 * H) out.push('這兩點在畫面最下面，看起來像是點到地板了。籃框在 3.05 公尺高，通常在畫面上半部。');
+  if (W && Math.abs(dx) < Math.max(6, 0.008 * W)) out.push('兩點太接近了，請放大畫面再點籃框的兩端。');
+  if (s.level === 'vertical' && top && bottom) {
+    const tilt = (Math.atan2(Math.abs(top.x - bottom.x), Math.abs(top.y - bottom.y) || 1e-9) * 180) / Math.PI;
+    if (tilt > 10) out.push(`垂直參考線歪了 ${Math.round(tilt)} 度，不像是鉛直的邊。請選籃板側邊或籃架立柱，不要用斜的支架。`);
+  }
+  if (s.auto && s.auto.rimBox) {
+    const b = s.auto.rimBox;
+    const cx = (front.x + back.x) / 2;
+    const cy = (front.y + back.y) / 2;
+    const w = b.x1 - b.x0;
+    if (Math.abs(cx - (b.x0 + b.x1) / 2) > w || Math.abs(cy - (b.y0 + b.y1) / 2) > w) out.push('點的位置和自動找到的籃框差很遠，請確認點的是你投的那個籃框。');
+  }
   return out;
 }
 
@@ -194,6 +245,7 @@ function applyAnalysis(shot, res) {
 /** 校正改了之後，每一球重新算一次（進球與否保留使用者確認過的結果）。 */
 export function reanalyzeAll(s) {
   for (const shot of s.shots) {
+    if (isFixedAuto(shot)) continue;
     if (!shot.points || shot.points.length < 3) continue;
     const res = analyzePoints(s, shot.points);
     if (res.ok) applyAnalysis(shot, res);
@@ -296,6 +348,7 @@ export function setMade(s, id, made) {
   if (!shot || shot.made === made) return;
   remember(s);
   shot.made = !!made;
+  if (shot.auto) shot.auto.corrected = true;
 }
 
 /** 把存好的一球拿回來重新調整（點太多時抽樣成最多 8 個）。 */
@@ -360,17 +413,21 @@ export function removeNoBall(s, index) {
 }
 
 // ── 給報告和匯出用 ──
-/** 依出手順序的 [{angle, made, source}]。 */
+/** 依出手順序的 [{angle, made, source}]。自動分析偏角太大（C 級）的球沒有角度（angle 是 null）。 */
 export function reportShots(s) {
-  return s.shots.filter((x) => typeof x.angle === 'number').map((x) => ({ angle: x.angle, made: !!x.made, source: x.source }));
+  return s.shots
+    .filter((x) => typeof x.angle === 'number' || (x.angle === null && isFixedAuto(x)))
+    .map((x) => ({ angle: x.angle, made: !!x.made, source: x.source }));
 }
 
 /** 示範模式：每一球對應的真實答案（對不到的是 null）。 */
 export function truthForShots(s) {
   if (!s.truth) return null;
   return s.shots
-    .filter((x) => typeof x.angle === 'number')
+    .filter((x) => typeof x.angle === 'number' || (x.angle === null && isFixedAuto(x)))
     .map((x) => {
+      // 自動分析的球用過框時間對；手動的用標記點的中間時間
+      if (x.auto && x.auto.tCross != null) return s.truth.find((t) => Math.abs(t.tCross - x.auto.tCross) < 0.35) || null;
       if (!x.points || !x.points.length) return null;
       const mid = (x.points[0].t + x.points[x.points.length - 1].t) / 2;
       return s.truth.find((t) => mid >= t.tRelease - 0.15 && mid <= t.tCross + 0.15) || null;
@@ -426,7 +483,8 @@ export function serializeDraft(s) {
     savedAt: new Date().toISOString(),
     hoopPoints: s.hoopPoints,
     level: s.level,
-    shots: s.shots.map((x) => ({ id: x.id, source: x.source, points: x.points, made: x.made, auto: x.auto || null })),
+    shots: s.shots.map((x) => (isFixedAuto(x) ? { ...x, analysis: null } : { id: x.id, source: x.source, points: x.points, made: x.made, auto: x.auto || null })),
+    auto: s.auto,
     draft: s.draft,
     noBall: s.noBall,
     player: s.player,
@@ -451,7 +509,12 @@ export function restoreDraft(s, d) {
   s.player = typeof d.player === 'string' ? d.player : '';
   if (typeof d.date === 'string') s.date = d.date;
   s.shots = [];
+  if (d.auto && typeof d.auto === 'object') s.auto = d.auto;
   for (const x of Array.isArray(d.shots) ? d.shots : []) {
+    if (isFixedAuto(x) && typeof x.made === 'boolean' && (x.angle === null || typeof x.angle === 'number')) {
+      s.shots.push({ ...x, points: Array.isArray(x.points) ? x.points : [] });
+      continue;
+    }
     if (!Array.isArray(x.points) || x.points.length < 3) continue;
     const res = analyzePoints(s, x.points);
     if (!res.ok) continue;

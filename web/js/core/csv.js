@@ -7,13 +7,15 @@ const YES = new Set(['是', '1', 'true', 'y', 'yes', '進', '進球', '有進', 
 const NO = new Set(['否', '0', 'false', 'n', 'no', '沒進', '未進', '不進', 'miss', 'missed', 'x', '✕', '×']);
 
 /**
- * @param {{angle:number, made:boolean}[]} shots
+ * @param {{angle:number|null, made:boolean}[]} shots angle 是 null 時那一格留空
  * @returns {string} CSV 文字（不含 BOM；存檔時由呼叫端加上，Excel 才不會亂碼）
  */
 export function shotsToCsv(shots) {
   const lines = [CSV_HEADER.join(',')];
   shots.forEach((s, i) => {
-    lines.push(`${i + 1},${Number(s.angle).toFixed(1)},${s.made ? '是' : '否'}`);
+    // 鏡頭角度太偏時（自動模式的 C 級）沒有入框角度，這一格留空
+    const a = s.angle == null ? '' : Number(s.angle).toFixed(1);
+    lines.push(`${i + 1},${a},${s.made ? '是' : '否'}`);
   });
   return lines.join('\r\n') + '\r\n';
 }
@@ -86,9 +88,13 @@ export function parseCsv(text) {
   const parsed = [];
   rows.forEach((r, i) => {
     const lineNo = i + 1 + (hasHeader ? 1 : 0);
-    const angle = toNumber(r[col.angle]);
+    const cell = r[col.angle];
+    let angle = toNumber(cell);
     const made = parseMade(r[col.made] ?? '');
-    if (!Number.isFinite(angle) || angle <= 0 || angle >= 90) {
+    const blank = typeof cell === 'string' && cell.trim() === '';
+    if (blank) {
+      angle = null; // 角度留空：這一球只有進或沒進（自動模式偏角太大時）
+    } else if (!Number.isFinite(angle) || angle <= 0 || angle >= 90) {
       warnings.push(`第 ${lineNo} 列的入框角度看不懂，已略過`);
       return;
     }

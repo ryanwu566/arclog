@@ -16,6 +16,13 @@
 
 做完會輸出 preview_check.jpg（隨機抽樣把框畫在圖上），請打開看一下框是不是套在球上、球是不是圓的。
 
+三類別模式（自動模式用）：加 --classes ball,rim,backboard，輸出固定 0 ball、1 rim、2 backboard。
+  - 類別依名稱對應（arclog/detector.py 的 CLASS_ALIASES），不靠編號。
+  - 先讀匯出檔裡的 README.roboflow.txt 核對授權：不是 CC BY 4.0、CC0、Public Domain 就停下來
+    （確認過授權可以用 --allow-license 繼續）。
+  - 某個來源沒有某個類別（例如 Arizona 的資料集看起來沒有籃板）時，記在 sources.json 的 missing，
+    之後用 training/pseudo_label.py 補標；沒補標就直接訓練，模型會把沒標的籃板當成背景。
+
 注意：公開資料集的驗證組只用來在訓練時挑選模型，不能當成我們自己場地的準確度。
 各資料集的出處和授權請看 docs/DATA.md；重新散布或發表成果時要依 CC BY 4.0 標示出處。
 """
@@ -92,6 +99,37 @@ def convert_label(text: str, ball: int) -> list[tuple[float, float, float, float
     return boxes
 
 
+LICENSE_OK = ("cc by 4.0", "cc-by-4.0", "cc0", "public domain", "creative commons attribution 4.0")
+
+
+def read_license(src: Path) -> str | None:
+    """讀 Roboflow 匯出檔的 README.roboflow.txt 裡「License: …」那一行；沒有就回傳 None。"""
+    for name in ("README.roboflow.txt", "README.dataset.txt"):
+        f = src / name
+        if not f.exists():
+            continue
+        for line in f.read_text(encoding="utf-8", errors="replace").splitlines():
+            m = re.match(r"\s*licen[cs]e\s*[:：]\s*(.+)$", line, re.I)
+            if m:
+                return m.group(1).strip()
+    return None
+
+
+def license_ok(text: str | None) -> bool:
+    """授權是不是在允許清單裡（CC BY 4.0、CC0、Public Domain）。"""
+    return bool(text) and any(k in text.strip().lower() for k in LICENSE_OK)
+
+
+def convert_label_multi(text: str, mapping: dict) -> list[tuple]:
+    """三類別：mapping 是 {來源編號: 目標編號}。回傳 [(目標編號, cx, cy, w, h)]，依目標編號排序。"""
+    out = []
+    for src_cls, dst_cls in mapping.items():
+        for b in convert_label(text, src_cls):
+            out.append((dst_cls, *b))
+    out.sort()
+    return out
+
+
 def place(src: Path, dst: Path, aspect: float | None) -> None:
     """把影像放到輸出資料夾：需要還原比例時重新存檔，否則用硬連結（不佔空間），不行再複製。"""
     if aspect:
@@ -127,9 +165,17 @@ def main() -> int:
     ap.add_argument("--limit", type=int, default=0, help="每個來源每一組最多取幾張（0＝全部；試流程時用）")
     ap.add_argument("--seed", type=int, default=1)
     ap.add_argument("--clean", action="store_true", help="輸出資料夾已經有東西時先清掉")
+    ap.add_argument("--classes", default="ball", help="要留的類別：ball（預設，只有籃球）或 ball,rim,backboard（自動模式的三類別）")
+    ap.add_argument("--allow-license", action="store_true", help="README.roboflow.txt 的授權不在允許清單或找不到時仍然繼續（自己確認過授權才用）")
     args = ap.parse_args()
 
-    from arclog.detector import resolve_class_index
+    from arclog.detector import resolve_class_index, resolve_classes
+
+    targets = [c.strip() for c in args.classes.split(",") if c.strip()]
+    multi = targets != ["ball"]
+    if multi and (targets[0] != "ball" or any(t not in ("ball", "rim", "backboard") for t in targets)):
+        print("[X] --classes 只能是 ball 或 ball,rim,backboard 的組合，而且第一個要是 ball")
+        return 1
 
     out = Path(args.out)
     if out.exists() and any(out.iterdir()):
@@ -142,7 +188,8 @@ def main() -> int:
         (out / "images" / s).mkdir(parents=True, exist_ok=True)
         (out / "labels" / s).mkdir(parents=True, exist_ok=True)
 
-    manifest = {"format": "arclog-dataset", "version": 1, "classes": ["basketball"], "public": True, "sources": [], "videos": [], "images": []}
+    manifest = {"format": "arclog-dataset", "version": 1, "classes": targets if multi else ["basketball"], "public": True, "sources": [], "videos": [], "images": []}
+    sources_info = []
     counts = {s: [0, 0] for s in ("train", "val", "test")}
 
     for si, src_arg in enumerate(args.src):
@@ -152,6 +199,28 @@ def main() -> int:
             print(f"[X] {src} 裡找不到 data.yaml（請確認下載時選的是 YOLO 格式）")
             return 1
         names = read_names(yaml_path)
+        mapping: dict = {}
+        missing: list = []
+        if multi:
+            lic = read_license(src)
+            if not license_ok(lic):
+                if not args.allow_license:
+                    print(f"[X] {src.name}：README.roboflow.txt 的授權是「{lic or '找不到'}」，不在允許清單（CC BY 4.0、CC0、Public Domain）。")
+                    print("    請到資料集頁面確認授權；確認可以使用之後再加 --allow-license。")
+                    return 1
+                print(f"[!] {src.name}：授權「{lic or '找不到'}」沒有通過自動核對，依 --allow-license 繼續。")
+            found_cls = resolve_classes(names, targets)
+            if "ball" not in found_cls:
+                print(f"[X] {src.name}：找不到籃球類別。類別有：{names}")
+                return 1
+            for ti, t in enumerate(targets):
+                for k in found_cls.get(t, []):
+                    mapping[k] = ti
+            missing = [t for t in targets if t not in found_cls]
+            desc = "、".join(f"{t}＝{[names[k] for k in found_cls.get(t, [])] or '沒有'}" for t in targets)
+            print(f"{src.name}：類別 {names} → {desc}；授權 {lic}")
+            sources_info.append({"name": src.name, "license": lic, "names": {str(k): v for k, v in names.items()},
+                                 "mapping": {str(k): targets[v] for k, v in mapping.items()}, "missing": missing})
         want = args.ball_class[si] if si < len(args.ball_class) else None
         if want is None:
             ball = resolve_class_index(names)
@@ -159,6 +228,8 @@ def main() -> int:
             ball = int(want)
         else:
             ball = next((k for k, v in names.items() if v.strip().lower() == want.strip().lower()), None)
+        if multi:
+            ball = min(k for k, v in mapping.items() if v == 0)
         if ball is None or ball not in names:
             print(f"[X] {src.name}：看不出哪個類別是籃球。類別有：{names}。請用 --ball-class 指定。")
             return 1
@@ -167,7 +238,8 @@ def main() -> int:
             a, b = args.aspect[si].replace("/", ":").split(":")
             aspect = float(a) / float(b)
         tag = re.sub(r"[^0-9A-Za-z]+", "", src.name)[:10] or f"src{si}"
-        print(f"{src.name}：類別 {names} → 只留「{names[ball]}」（編號 {ball}）" + (f"，影像還原成 {args.aspect[si]}" if aspect else ""))
+        if not multi:
+            print(f"{src.name}：類別 {names} → 只留「{names[ball]}」（編號 {ball}）" + (f"，影像還原成 {args.aspect[si]}" if aspect else ""))
 
         # 讀進每一組的影像
         found: dict[str, list[tuple[Path, Path]]] = {}
@@ -219,7 +291,9 @@ def main() -> int:
                 items = rng.sample(items, args.limit)
             pos, neg = [], []
             for img, lab in items:
-                boxes = convert_label(lab.read_text(encoding="utf-8", errors="replace"), ball) if lab.exists() else []
+                text = lab.read_text(encoding="utf-8", errors="replace") if lab.exists() else ""
+                # 三類別：有任何一類的框就算有標註；負樣本只留什麼都沒有的
+                boxes = (convert_label_multi(text, mapping) if multi else convert_label(text, ball)) if text else []
                 (pos if boxes else neg).append((img, boxes))
             keep_neg = int(len(pos) * args.max_neg_ratio)
             if len(neg) > keep_neg:
@@ -228,10 +302,16 @@ def main() -> int:
                 stem = f"{tag}_{img.stem}"[:150]
                 dst = out / "images" / split / (stem + (".jpg" if aspect else img.suffix.lower()))
                 place(img, dst, aspect)
-                text = "".join(f"0 {cx:.6f} {cy:.6f} {w:.6f} {h:.6f}\n" for cx, cy, w, h in boxes)
-                (out / "labels" / split / (stem + ".txt")).write_text(text, encoding="utf-8")
-                manifest["images"].append({"file": f"{split}/{dst.name}", "video": src.name, "split": split, "bundleFrame": 0, "videoFrame": 0,
-                                           "boxes": len(boxes), "src": ["public"] * len(boxes)})
+                if multi:
+                    text = "".join(f"{c} {cx:.6f} {cy:.6f} {w:.6f} {h:.6f}\n" for c, cx, cy, w, h in boxes)
+                else:
+                    text = "".join(f"0 {cx:.6f} {cy:.6f} {w:.6f} {h:.6f}\n" for cx, cy, w, h in boxes)
+                (out / "labels" / split / (stem + ".txt")).write_bytes(text.encode("utf-8"))
+                entry = {"file": f"{split}/{dst.name}", "video": src.name, "split": split, "bundleFrame": 0, "videoFrame": 0,
+                         "boxes": len(boxes), "src": ["public"] * len(boxes)}
+                if multi:
+                    entry["missing"] = missing
+                manifest["images"].append(entry)
             counts[split][0] += len(pos)
             counts[split][1] += len(neg)
             info["splits"][split] = {"positives": len(pos), "negatives": len(neg)}
@@ -248,7 +328,15 @@ def main() -> int:
     ]
     if counts["test"][0] + counts["test"][1]:
         yaml_lines.append("test: images/test")
-    yaml_lines += ["names:", "  0: basketball", ""]
+    if multi:
+        yaml_lines[0] = "# 由 training/prepare_public.py 產生：公開資料集，三個類別（自動模式）。"
+        yaml_lines += ["names:"] + [f"  {i}: {t}" for i, t in enumerate(targets)] + [""]
+        (out / "sources.json").write_bytes(json.dumps({"classes": targets, "sources": sources_info}, ensure_ascii=False, indent=2).encode("utf-8"))
+        need = sorted({m for x in sources_info for m in x["missing"]})
+        if need:
+            print(f"[!] 有來源缺少這些類別：{need}（見 sources.json）。訓練前請先用 training/pseudo_label.py 補標。")
+    else:
+        yaml_lines += ["names:", "  0: basketball", ""]
     (out / "data.yaml").write_text("\n".join(yaml_lines), encoding="utf-8")
     (out / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
 

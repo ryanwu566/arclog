@@ -75,3 +75,14 @@ def test_api_key_is_read_from_an_input_field_and_never_stored(nb):
 # 在本機完整執行一次（synthetic 模式，CPU 大約十分鐘）：
 #
 #   python tests/run_notebook.py
+
+
+def test_three_class_stage(nb):
+    code = "\n".join(c.source for c in nb.cells if c.cell_type == "code")
+    assert 'STAGE == "B3"' in code
+    i_prep = code.find('"--classes", "ball,rim,backboard"')
+    i_pseudo = code.find("training/pseudo_label.py")
+    assert 0 <= i_prep < i_pseudo, "先轉成三類別、再補標"
+    # 兩個要下載資料的階段都用輸入欄位讀金鑰，用完都刪掉
+    assert code.count("getpass(") >= 2 and code.count("del api_key") >= 2
+    assert "--rim-box" in code and "ALLOW_LICENSE" in code

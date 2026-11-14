@@ -40,6 +40,31 @@ def resolve_class_index(names: dict) -> int | None:
     return None
 
 
+#: 三類別模型（自動模式）：類別名稱的別名。公開資料集的命名各不相同，一律依名稱對應，不靠編號。
+CLASS_ALIASES = {
+    "ball": ("ball", "basketball", "sports ball", "basket ball"),
+    "rim": ("rim", "hoop", "basket", "basketball hoop", "ring"),
+    "backboard": ("backboard", "back board", "board", "basketball backboard"),
+}
+
+
+def resolve_classes(names: dict, wanted=("ball", "rim", "backboard")) -> dict:
+    """從類別名稱找出 ball／rim／backboard 各是第幾類（一個目標可能對應好幾個來源編號）。
+
+    回傳 {目標名稱: [來源編號, ...]}；找不到的目標不會出現在結果裡。
+    只接受名稱完全符合別名的類別（底線、連字號當成空格）："made"、"ball-in-hoop" 這類事件標籤不算。
+    """
+    norm = lambda x: " ".join(str(x).strip().lower().replace("_", " ").replace("-", " ").split())  # noqa: E731
+    lower = {int(k): norm(v) for k, v in names.items()}
+    out: dict = {}
+    for want in wanted:
+        aliases = {norm(a) for a in CLASS_ALIASES[want]}
+        hit = [k for k, v in sorted(lower.items()) if v in aliases]
+        if hit:
+            out[want] = hit
+    return out
+
+
 def load_manifest(models_dir: Path | str = MODELS_DIR) -> dict:
     """讀 models/manifest.json。"""
     return json.loads((Path(models_dir) / "manifest.json").read_text(encoding="utf-8"))

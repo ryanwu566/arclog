@@ -35,6 +35,10 @@ sys.path.insert(0, str(ROOT))
 STAGE_DEFAULTS = {
     "B": {"epochs": 80, "patience": 20, "name": "stage_b"},
     "C": {"epochs": 50, "patience": 15, "name": "stage_c"},
+    # 自動模式的三類別模型（球、籃框、籃板），用公開資料集（prepare_public.py --classes ball,rim,backboard）
+    "B3": {"epochs": 80, "patience": 20, "name": "stage_b3"},
+    # 補標前先訓練的「只用有籃板標註的資料」模型（pseudo_label.py 用它補 Arizona 資料集的籃板）
+    "B3-board": {"epochs": 40, "patience": 10, "name": "stage_b3_board"},
     "synthetic": {"epochs": 3, "patience": 0, "name": "synthetic"},
 }
 BASE_WEIGHTS = "yolo26n.pt"  # 最新一代的 Nano 尺寸（理由見 docs/PLAN.md）
@@ -66,7 +70,7 @@ def main() -> int:
         except (AttributeError, ValueError):
             pass
     ap = argparse.ArgumentParser(description="訓練籃球偵測模型", formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--stage", required=True, choices=sorted(STAGE_DEFAULTS), help="B＝公開資料；C＝自己的影片；synthetic＝合成資料（只試流程）")
+    ap.add_argument("--stage", required=True, choices=sorted(STAGE_DEFAULTS), help="B＝公開資料（只有球）；B3＝公開資料三類別（球、籃框、籃板）；B3-board＝補標用；C＝自己的影片；synthetic＝合成資料（只試流程）")
     ap.add_argument("--data", required=True, help="資料集的 data.yaml")
     ap.add_argument("--weights", default=None, help=f"從哪個權重開始（預設 {BASE_WEIGHTS}；階段 C 建議給階段 B 的 best.pt）")
     ap.add_argument("--epochs", type=int, default=None, help="最多訓練幾輪")
@@ -159,7 +163,7 @@ def main() -> int:
     if metrics:
         print("     驗證組（訓練時用來挑模型的那一組）的分數：" + "、".join(f"{k} {v}" for k, v in metrics.items()))
         print("     這不是最終準確度：要看 training/evaluate.py 在測試影片上的結果。")
-    model_id = {"B": "arclog-ball-b-public", "C": "arclog-ball-c-own", "synthetic": "arclog-ball-synth"}[args.stage]
+    model_id = {"B": "arclog-ball-b-public", "B3": "arclog-brb-b-public", "B3-board": "arclog-brb-board-tmp", "C": "arclog-ball-c-own", "synthetic": "arclog-ball-synth"}[args.stage]
     extra = " --out-dir data/models_synth" if args.stage == "synthetic" else ""
     print("下一步，匯出成網站用的 ONNX：")
     print(f"     python training/export_onnx.py --weights \"{best}\" --id {model_id} --stage {args.stage}{extra}")

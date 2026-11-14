@@ -36,7 +36,7 @@ export function buildReport(p) {
     const t = p.truth ? p.truth[i] : null;
     if (t) {
       row.trueAngle = t.angleDeg;
-      row.error = s.angle - t.angleDeg;
+      row.error = typeof s.angle === 'number' ? s.angle - t.angleDeg : null;
       row.trueMade = t.made;
     }
     return row;

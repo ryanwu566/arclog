@@ -30,8 +30,8 @@
   <!-- ───────── 首頁 ───────── -->
   <section class="view" id="view-home" aria-labelledby="home-title">
     <div class="hero">
-      <h1 id="home-title">手機側拍練投，<wbr>算出每一球的入框角度</h1>
-      <p class="lead">把手機用腳架固定在罰球線的正側面，錄下練投。ArcLog 會算出每一球通過籃框時的角度和進球與否，整理成一份練習報告。</p>
+      <h1 id="home-title">架好手機投籃，<wbr>停下來就看結果</h1>
+      <p class="lead">手機放腳架、對著你的籃框，按「開始練投」照畫面架好就可以投。按停止之後，ArcLog 自動找出每一球，算出命中率和入框角度。不用點籃框、不用標記。</p>
       <p class="privacy">
         <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M12 3l7 3v5c0 4.5-2.9 8.3-7 10-4.1-1.7-7-5.5-7-10V6l7-3z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M9 12l2.2 2.2L15.2 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
         <span>影片只在你的手機或電腦上處理，<strong>不會上傳到任何地方</strong>。報告和紀錄也只存在這台裝置的瀏覽器裡。</span>
@@ -39,27 +39,57 @@
     </div>
 
     <div class="home-actions">
-      <label class="btn btn-primary btn-lg" for="file-video">選擇練投影片</label>
+      <button class="btn btn-primary btn-lg" type="button" id="btn-capture">開始練投</button>
+      <label class="btn btn-lg" for="file-video">上傳練投影片</label>
       <input class="visually-hidden" type="file" id="file-video" accept="video/*,.mp4,.mov,.m4v">
-      <button class="btn btn-lg" type="button" id="btn-demo">示範模式（不用影片）</button>
       <div class="home-actions-row">
-        <label class="btn" for="file-csv">匯入 CSV</label>
-        <input class="visually-hidden" type="file" id="file-csv" accept=".csv,text/csv,text/plain">
+        <button class="btn" type="button" id="btn-demo-auto">看示範</button>
         <button class="btn" type="button" id="btn-history">歷次紀錄</button>
       </div>
     </div>
     <p class="load-status" id="home-status" role="status" aria-live="polite"></p>
     <div class="notice notice-warn" id="home-error" role="alert" hidden></div>
+    <div class="notice" id="home-pending" hidden></div>
+
+    <details class="card" id="demo-options">
+      <summary>示範的設定</summary>
+      <p class="hint">示範用電腦畫出來的練投（每一球的真實角度和進球與否都是已知的），偵測也是模擬的，不是真的模型。可以選不同的鏡頭擺法，看 ArcLog 怎麼處理。</p>
+      <div class="form-grid">
+        <label>鏡頭擺法
+          <select id="demo-view">
+            <option value="side">側面（最準）</option>
+            <option value="oblique">斜後方約 45 度</option>
+            <option value="behind">投籃者正後方</option>
+          </select>
+        </label>
+        <label class="inline-opt"><input type="checkbox" id="demo-background" checked> 背景有別人在投另一個籃框、運球、傳球</label>
+      </div>
+      <div class="btn-row">
+        <button class="btn" type="button" id="btn-demo-capture">示範錄影（不開相機）</button>
+      </div>
+    </details>
+
+    <details class="card" id="home-advanced">
+      <summary>進階：手動標記、匯入</summary>
+      <p class="hint">自動結果不對、或想自己逐球標記時用。手動標記的結果也可以匯出成標註包，拿去訓練偵測模型。</p>
+      <div class="btn-row btn-row-wrap">
+        <button class="btn" type="button" id="btn-demo">手動標記示範</button>
+        <label class="btn" for="file-video-manual">手動標記一支影片</label>
+        <input class="visually-hidden" type="file" id="file-video-manual" accept="video/*,.mp4,.mov,.m4v">
+        <label class="btn" for="file-csv">匯入 CSV</label>
+        <input class="visually-hidden" type="file" id="file-csv" accept=".csv,text/csv,text/plain">
+      </div>
+    </details>
 
     <details class="card">
       <summary>怎麼拍才量得準</summary>
       <ul class="tips">
         <li><strong>固定</strong>：手機放腳架，整段不要動。</li>
-        <li><strong>正側面</strong>：鏡頭對準罰球線到籃框這條線的正側面。偏 10 度大約會高估 0.4 度，偏 20 度大約高估 1.8 度。</li>
+        <li><strong>側面最好</strong>：鏡頭對著投籃方向的側面。ArcLog 會自動判斷鏡頭偏了多少：偏 30 度以內完整報告；30 到 60 度誤差比較大；從投籃者背後或正前方拍，只統計出手和命中，不給入框角度。</li>
         <li><strong>高度</strong>：鏡頭在腰到胸之間，手機放平，盡量不要仰太多。</li>
         <li><strong>入鏡</strong>：整條拋物線和籃框都要拍到，橫向拍攝。</li>
         <li><strong>設定</strong>：每秒 60 幀的一般錄影（不要用慢動作），避免背光。</li>
-        <li><strong>一次一顆球</strong>：畫面裡一次只有一顆球在投。</li>
+        <li><strong>整個籃框和籃板都要入鏡</strong>：ArcLog 靠它們判斷位置和鏡頭角度。旁邊有人投別的籃框沒關係。</li>
       </ul>
       <p class="hint">iPhone 請注意：在 Safari 從「照片」選影片時，系統給網頁的是轉過檔的版本。只看報告沒有影響；如果要把標註拿去訓練模型，請在筆電上用原始檔標註。</p>
     </details>
@@ -118,6 +148,29 @@
         <!-- 校正 -->
         <div class="panel" id="panel-calibrate">
           <h2>校正：點籃框的前緣和後緣</h2>
+          <figure class="cal-diagram">
+            <svg viewBox="0 0 320 170" role="img" aria-labelledby="cal-diagram-cap">
+              <rect x="0" y="0" width="320" height="170" fill="#eef1f3"/>
+              <rect x="0" y="140" width="320" height="30" fill="#d8c3a2"/>
+              <rect x="228" y="18" width="10" height="100" fill="#ffffff" stroke="#3f474e" stroke-width="2"/>
+              <rect x="238" y="62" width="44" height="6" fill="#4f5961"/>
+              <rect x="276" y="62" width="8" height="78" fill="#4f5961"/>
+              <ellipse cx="190" cy="86" rx="38" ry="7" fill="none" stroke="#e4571b" stroke-width="4"/>
+              <path d="M155 89 L170 124 L210 124 L225 89" fill="none" stroke="#9aa3aa" stroke-width="1.5" stroke-dasharray="3 3"/>
+              <line x1="152" y1="86" x2="228" y2="86" stroke="#0b0b0b" stroke-width="1" stroke-dasharray="4 3"/>
+              <circle cx="152" cy="86" r="6" fill="#1c5cab" stroke="#fff" stroke-width="2"/>
+              <text x="140" y="70" font-size="13" font-weight="700" fill="#1c5cab" text-anchor="middle">1 前緣</text>
+              <circle cx="228" cy="86" r="6" fill="#1c5cab" stroke="#fff" stroke-width="2"/>
+              <text x="203" y="112" font-size="13" font-weight="700" fill="#1c5cab" text-anchor="middle">2 後緣</text>
+              <line x1="233" y1="22" x2="233" y2="114" stroke="#2a78d6" stroke-width="2" stroke-dasharray="5 3"/>
+              <text x="250" y="14" font-size="12" fill="#2a78d6">3、4 垂直參考線（選用）</text>
+              <circle cx="58" cy="60" r="11" fill="#384451"/>
+              <rect x="50" y="72" width="16" height="44" rx="6" fill="#384451"/>
+              <rect x="50" y="114" width="6" height="26" fill="#384451"/><rect x="60" y="114" width="6" height="26" fill="#384451"/>
+              <text x="58" y="160" font-size="12" fill="#52514e" text-anchor="middle">投籃的人</text>
+            </svg>
+            <figcaption id="cal-diagram-cap">籃框在畫面上是一個扁扁的橢圓。點它最左、最右的兩端：靠近投籃者的是前緣，靠近籃板的是後緣。兩點要在同一個高度，不要點到球網或地板。</figcaption>
+          </figure>
           <ol class="howto">
             <li>拖時間軸，找一幀籃框看得清楚的畫面（可以用兩指或 ＋ 放大）。</li>
             <li>點籃框<strong>前緣</strong>：靠近投籃者的那一端。</li>
@@ -263,12 +316,64 @@
     </div>
   </section>
 
+  <!-- ───────── 自動分析（上傳的影片、示範、錄影補分析） ───────── -->
+  <section class="view" id="view-analyze" hidden>
+    <div class="view-head">
+      <h2 id="analyze-title">分析中</h2>
+    </div>
+    <div class="card" id="analyze-progress">
+      <p class="progress-title" id="analyze-stage" role="status" aria-live="polite">準備中…</p>
+      <progress id="analyze-bar" max="1" value="0"></progress>
+      <p class="hint" id="analyze-detail"></p>
+      <div class="btn-row">
+        <button type="button" class="btn" id="analyze-cancel">取消</button>
+      </div>
+    </div>
+    <div class="notice notice-warn" id="analyze-error" role="alert" hidden></div>
+  </section>
+
+  <!-- ───────── 錄影 ───────── -->
+  <section class="view view-capture" id="view-capture" hidden>
+    <div class="capture-stage" id="capture-stage">
+      <video id="capture-video" playsinline muted autoplay></video>
+      <svg class="capture-guide" id="capture-guide" viewBox="0 0 160 90" preserveAspectRatio="none" aria-hidden="true">
+        <rect class="guide-hoop" x="100" y="10" width="44" height="32" rx="3"/>
+        <text class="guide-text" x="122" y="7" text-anchor="middle">籃框和籃板放這裡</text>
+        <rect class="guide-shooter" x="12" y="30" width="36" height="56" rx="3"/>
+        <text class="guide-text" x="30" y="27" text-anchor="middle">投籃的人整個入鏡</text>
+      </svg>
+      <canvas id="capture-overlay" class="capture-overlay"></canvas>
+      <div class="capture-rotate" id="capture-rotate" hidden>請把手機橫過來拿（橫向拍攝）</div>
+      <div class="capture-hud">
+        <span class="hud-chip hud-rec" id="capture-rec" hidden>● 錄影中 <b id="capture-time">0:00</b></span>
+        <span class="hud-chip" id="capture-count" hidden></span>
+      </div>
+    </div>
+    <div class="capture-panel">
+      <ul class="check-list" id="capture-checks">
+        <li id="chk-camera" data-state="wait"><span class="chk-label">相機</span> <span class="chk-text"></span></li>
+        <li id="chk-model" data-state="wait"><span class="chk-label">偵測</span> <span class="chk-text"></span></li>
+        <li id="chk-hoop" data-state="wait"><span class="chk-label">籃框</span> <span class="chk-text"></span></li>
+        <li id="chk-angle" data-state="wait"><span class="chk-label">鏡頭角度</span> <span class="chk-text"></span></li>
+      </ul>
+      <p class="hint" id="capture-hint">橫拿手機放在腳架上，整個籃框、籃板和投籃的人都要入鏡。架好之後不要再動手機。</p>
+      <div class="notice notice-warn" id="capture-error" role="alert" hidden></div>
+      <div class="btn-row">
+        <button type="button" class="btn btn-primary btn-lg" id="capture-start" disabled>開始錄</button>
+        <button type="button" class="btn btn-lg btn-stop" id="capture-stop" hidden>停止</button>
+        <button type="button" class="btn" id="capture-cancel">返回</button>
+      </div>
+    </div>
+  </section>
+
   <!-- ───────── 報告 ───────── -->
   <section class="view" id="view-report" hidden>
     <div class="view-head">
       <h2>練投報告</h2>
       <button type="button" class="btn" id="report-back">回去修改</button>
     </div>
+    <div class="conclusion" id="report-conclusion"></div>
+    <div class="notice-list" id="report-view-notice"></div>
     <div class="form-grid form-grid-2">
       <label>球員姓名
         <input type="text" id="report-player" maxlength="40" autocomplete="off" placeholder="選填">
@@ -296,7 +401,13 @@
       <div id="report-summary" class="summary"></div>
     </div>
 
-    <details class="card" open>
+    <div class="card" id="report-shots-card">
+      <h3>每一球</h3>
+      <p class="hint">點一下可以看軌跡疊圖。自動結果錯了，在那一球按「修正」。</p>
+      <ol class="shot-cards" id="report-shot-cards"></ol>
+    </div>
+
+    <details class="card">
       <summary>每一球的數字</summary>
       <div class="table-wrap"><table class="table" id="report-rows"></table></div>
       <p class="hint" id="report-demo-note" hidden></p>

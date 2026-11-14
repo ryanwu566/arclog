@@ -45,7 +45,7 @@ async function openWithVideo() {
   const page = await context.newPage();
   const errors = collectErrors(page);
   await gotoApp(page, server.url + '/index.html');
-  await page.setInputFiles('#file-video', MP4);
+  await page.setInputFiles('#file-video-manual', MP4);
   return { context, page, errors };
 }
 
@@ -175,7 +175,7 @@ test('重新整理後載入同一個檔案：詢問要不要接續，接續後�
   const context = await browser.newContext({ viewport: { width: 1280, height: 860 } });
   const page = await context.newPage();
   await gotoApp(page, server.url + '/index.html');
-  await page.setInputFiles('#file-video', MP4);
+  await page.setInputFiles('#file-video-manual', MP4);
   await page.waitForSelector('#view-work:not([hidden])', { timeout: 60000 });
   // 標一球之後重新整理
   await tapImage(page, truth.hoop.front.x, truth.hoop.front.y);
@@ -192,7 +192,7 @@ test('重新整理後載入同一個檔案：詢問要不要接續，接續後�
   await page.waitForTimeout(600); // 草稿是稍後才寫入的
   await page.reload();
   await page.waitForFunction(() => !!window.__arclog);
-  await page.setInputFiles('#file-video', MP4);
+  await page.setInputFiles('#file-video-manual', MP4);
   await page.waitForSelector('#dialog[open]', { timeout: 60000 });
   assert.match(await page.textContent('#dialog-title'), /接續上次的標記/);
   await page.click('#dialog-ok');
