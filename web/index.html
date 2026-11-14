@@ -1,0 +1,363 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light">
+<meta name="theme-color" content="#f9f9f7">
+<meta name="description" content="手機側拍練投，算出每一球的入框角度和進球與否。影片只在你的裝置上處理，不會上傳。">
+<title>ArcLog 練投紀錄員</title>
+<link rel="icon" href="img/icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+<a class="skip" href="#main">跳到主要內容</a>
+
+<header class="topbar">
+  <button class="icon-btn" id="nav-home" type="button" aria-label="回首頁" hidden>
+    <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M15 5l-7 7 7 7" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+  </button>
+  <div class="brand"><span class="brand-name">ArcLog</span><span class="brand-sub">練投紀錄員</span></div>
+  <div class="topbar-title" id="topbar-title"></div>
+</header>
+
+<div class="banner banner-demo" id="demo-banner" hidden>
+  <strong>合成示範</strong>：畫面和數據都是電腦產生的，不是真實球員的資料。
+</div>
+
+<main id="main">
+
+  <!-- ───────── 首頁 ───────── -->
+  <section class="view" id="view-home" aria-labelledby="home-title">
+    <div class="hero">
+      <h1 id="home-title">手機側拍練投，<wbr>算出每一球的入框角度</h1>
+      <p class="lead">把手機用腳架固定在罰球線的正側面，錄下練投。ArcLog 會算出每一球通過籃框時的角度和進球與否，整理成一份練習報告。</p>
+      <p class="privacy">
+        <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M12 3l7 3v5c0 4.5-2.9 8.3-7 10-4.1-1.7-7-5.5-7-10V6l7-3z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M9 12l2.2 2.2L15.2 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <span>影片只在你的手機或電腦上處理，<strong>不會上傳到任何地方</strong>。報告和紀錄也只存在這台裝置的瀏覽器裡。</span>
+      </p>
+    </div>
+
+    <div class="home-actions">
+      <label class="btn btn-primary btn-lg" for="file-video">選擇練投影片</label>
+      <input class="visually-hidden" type="file" id="file-video" accept="video/*,.mp4,.mov,.m4v">
+      <button class="btn btn-lg" type="button" id="btn-demo">示範模式（不用影片）</button>
+      <div class="home-actions-row">
+        <label class="btn" for="file-csv">匯入 CSV</label>
+        <input class="visually-hidden" type="file" id="file-csv" accept=".csv,text/csv,text/plain">
+        <button class="btn" type="button" id="btn-history">歷次紀錄</button>
+      </div>
+    </div>
+    <p class="load-status" id="home-status" role="status" aria-live="polite"></p>
+    <div class="notice notice-warn" id="home-error" role="alert" hidden></div>
+
+    <details class="card">
+      <summary>怎麼拍才量得準</summary>
+      <ul class="tips">
+        <li><strong>固定</strong>：手機放腳架，整段不要動。</li>
+        <li><strong>正側面</strong>：鏡頭對準罰球線到籃框這條線的正側面。偏 10 度大約會高估 0.4 度，偏 20 度大約高估 1.8 度。</li>
+        <li><strong>高度</strong>：鏡頭在腰到胸之間，手機放平，盡量不要仰太多。</li>
+        <li><strong>入鏡</strong>：整條拋物線和籃框都要拍到，橫向拍攝。</li>
+        <li><strong>設定</strong>：每秒 60 幀的一般錄影（不要用慢動作），避免背光。</li>
+        <li><strong>一次一顆球</strong>：畫面裡一次只有一顆球在投。</li>
+      </ul>
+      <p class="hint">iPhone 請注意：在 Safari 從「照片」選影片時，系統給網頁的是轉過檔的版本。只看報告沒有影響；如果要把標註拿去訓練模型，請在筆電上用原始檔標註。</p>
+    </details>
+
+    <details class="card">
+      <summary>這個工具量什麼、不量什麼</summary>
+      <p>量的是<strong>入框角度</strong>：球往下通過籃框平面時，軌跡和水平的夾角。參考線是 45 度。</p>
+      <p>進球與否是依球通過籃框的位置<strong>建議</strong>，你可以一鍵改正。</p>
+      <p>單支手機側拍看不到深度和左右偏差，所以不量這兩項。</p>
+    </details>
+
+    <footer class="foot">
+      <span>ArcLog 0.1.0</span>
+      <a href="https://github.com/ryanwu566/arclog" rel="noopener">原始碼（AGPL-3.0）</a>
+    </footer>
+  </section>
+
+  <!-- ───────── 校正與標記 ───────── -->
+  <section class="view" id="view-work" hidden>
+    <nav class="steps" aria-label="步驟">
+      <button type="button" class="step" data-step="calibrate" aria-current="step"><span class="step-n">1</span>校正</button>
+      <button type="button" class="step" data-step="mark"><span class="step-n">2</span>標記</button>
+      <button type="button" class="step" data-step="report"><span class="step-n">3</span>報告</button>
+    </nav>
+
+    <div class="notice-list" id="work-warnings"></div>
+
+    <div class="work-grid">
+      <div class="stage-col">
+        <div class="stage" id="stage">
+          <canvas id="stage-canvas" tabindex="0" aria-label="影片畫面。在球心上點一下可以標記。"></canvas>
+          <canvas id="loupe" class="loupe" width="264" height="264" hidden aria-hidden="true"></canvas>
+          <div class="zoom-btns">
+            <button type="button" class="chip-btn" id="zoom-in" aria-label="放大">＋</button>
+            <button type="button" class="chip-btn" id="zoom-out" aria-label="縮小">－</button>
+            <button type="button" class="chip-btn" id="zoom-reset" aria-label="還原大小" hidden>1×</button>
+          </div>
+          <div class="stage-status" id="stage-status" hidden></div>
+        </div>
+        <div class="transport">
+          <div class="scrub-wrap">
+            <div class="scrub-marks" id="scrub-marks" aria-hidden="true"></div>
+            <input type="range" id="scrub" min="0" max="0" value="0" step="1" aria-label="時間軸">
+          </div>
+          <div class="transport-row">
+            <button type="button" class="btn btn-step" data-jump="-10" aria-label="後退 10 幀">−10</button>
+            <button type="button" class="btn btn-step" data-jump="-1" aria-label="上一幀">◀</button>
+            <output class="frame-label" id="frame-label">—</output>
+            <button type="button" class="btn btn-step" data-jump="1" aria-label="下一幀">▶</button>
+            <button type="button" class="btn btn-step" data-jump="10" aria-label="前進 10 幀">+10</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel-col">
+        <!-- 校正 -->
+        <div class="panel" id="panel-calibrate">
+          <h2>校正：點籃框的前緣和後緣</h2>
+          <ol class="howto">
+            <li>拖時間軸，找一幀籃框看得清楚的畫面（可以用兩指或 ＋ 放大）。</li>
+            <li>點籃框<strong>前緣</strong>：靠近投籃者的那一端。</li>
+            <li>點籃框<strong>後緣</strong>：靠近籃板的那一端。</li>
+            <li>水平基準選「垂直參考線」時，再點一條<strong>鉛直的邊</strong>（例如籃板側邊）的兩端。</li>
+          </ol>
+          <p class="next-hint" id="cal-next" role="status" aria-live="polite"></p>
+          <dl class="facts" id="cal-facts" hidden>
+            <div><dt>籃框寬</dt><dd id="cal-width">—</dd></div>
+            <div><dt>球直徑約</dt><dd id="cal-ball">—</dd></div>
+            <div><dt id="cal-tilt-label">連線傾斜</dt><dd id="cal-tilt">—</dd></div>
+          </dl>
+          <div class="notice-list" id="cal-warnings"></div>
+          <fieldset class="options">
+            <legend>水平基準</legend>
+            <label><input type="radio" name="level" value="persp" checked> 籃框連線，並修正透視（實拍影片的預設；假設用手機 1 倍鏡頭拍）</label>
+            <label><input type="radio" name="level" value="vertical"> 垂直參考線：再點一條鉛直的邊（籃板側邊、籃架立柱、門框）。不用假設鏡頭焦距，手機歪了也不受影響</label>
+            <label><input type="radio" name="level" value="rim"> 籃框連線，不修正（合成示範畫面用）</label>
+            <label><input type="radio" name="level" value="image"> 畫面水平（手機已用水平儀放平）</label>
+          </fieldset>
+          <div class="btn-row">
+            <button type="button" class="btn" id="cal-reset">重新點</button>
+            <button type="button" class="btn" id="cal-demo" hidden>幫我點（示範）</button>
+            <button type="button" class="btn btn-primary" id="cal-done" disabled>下一步：標記</button>
+          </div>
+        </div>
+
+        <!-- 標記 -->
+        <div class="panel" id="panel-mark" hidden>
+          <div class="panel-head">
+            <h2>標記每一球</h2>
+            <button type="button" class="btn btn-primary" id="btn-auto">自動偵測</button>
+          </div>
+          <p class="hint" id="mark-hint">逐幀找到球離手後的畫面，在<strong>球心</strong>上點一下。每球點 4 到 6 個位置，從出手後一路點到進框前。</p>
+
+          <div class="draft" id="draft-box">
+            <div class="draft-head">
+              <strong id="draft-title">第 1 球</strong>
+              <span class="draft-count" id="draft-count">還沒有點</span>
+            </div>
+            <div class="draft-result" id="draft-result" hidden>
+              <div class="angle-big"><span id="draft-angle">—</span><small>入框角度</small></div>
+              <div class="made-toggle" role="radiogroup" aria-label="這球有沒有進">
+                <button type="button" class="made-btn" data-made="1" role="radio" aria-checked="false"><span class="mk mk-make" aria-hidden="true"></span>進球</button>
+                <button type="button" class="made-btn" data-made="0" role="radio" aria-checked="false"><span class="mk mk-miss" aria-hidden="true"></span>沒進</button>
+              </div>
+            </div>
+            <p class="hint" id="draft-note"></p>
+            <div class="btn-row">
+              <button type="button" class="btn" id="btn-undo" disabled>復原</button>
+              <button type="button" class="btn" id="btn-clear-draft" disabled>清掉這球</button>
+              <button type="button" class="btn btn-primary" id="btn-save-shot" disabled>儲存這球</button>
+            </div>
+            <label class="inline-opt">點完自動前進
+              <select id="auto-advance" aria-label="點完自動前進幾幀"></select>
+            </label>
+          </div>
+
+          <div class="shots-head">
+            <h3>已記錄 <span id="shot-count">0</span> 球</h3>
+            <button type="button" class="btn btn-primary" id="btn-to-report" disabled>看報告</button>
+          </div>
+          <ol class="shot-list" id="shot-list"></ol>
+
+          <details class="card card-inset" id="noball-box">
+            <summary>訓練資料用：標記「畫面上沒有球」的片段（選填）</summary>
+            <p class="hint">訓練偵測模型需要一些確定沒有球的畫面。找到一段畫面裡完全沒有籃球的時間，標出開始和結束。</p>
+            <div class="btn-row">
+              <button type="button" class="btn" id="noball-start">從這一幀開始</button>
+              <button type="button" class="btn" id="noball-end" disabled>到這一幀結束</button>
+            </div>
+            <ul class="plain-list" id="noball-list"></ul>
+          </details>
+          <div class="btn-row">
+            <button type="button" class="btn" id="btn-export-bundle" disabled>匯出標註包（JSON）</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ───────── 自動偵測 ───────── -->
+  <section class="view" id="view-auto" hidden>
+    <div class="view-head">
+      <h2>自動偵測</h2>
+      <button type="button" class="btn" id="auto-back">回到標記</button>
+    </div>
+
+    <div class="card" id="auto-setup">
+      <p>用偵測模型逐幀找出籃球，把飛行軌跡串起來，自動算出每一球。找到的每一球都會列出來讓你確認。</p>
+      <div class="form-grid">
+        <label>偵測模型
+          <select id="auto-model"></select>
+        </label>
+        <label>範圍
+          <select id="auto-range">
+            <option value="all">整支影片</option>
+            <option value="from">從目前這一幀到最後</option>
+          </select>
+        </label>
+        <label>偵測密度
+          <select id="auto-density">
+            <option value="normal">標準（每秒看 20 到 30 幀）</option>
+            <option value="fine">精細（每一幀都看，最多每秒 60 幀，比較慢）</option>
+          </select>
+        </label>
+      </div>
+      <p class="hint" id="auto-model-note"></p>
+      <details class="card-inset">
+        <summary>進階</summary>
+        <label class="inline-opt"><input type="checkbox" id="auto-force-wasm"> 不使用 WebGPU（比較慢，但最相容）</label>
+        <div class="btn-row">
+          <label class="btn" for="file-onnx">載入自己訓練的 ONNX 模型</label>
+          <input class="visually-hidden" type="file" id="file-onnx" accept=".onnx">
+        </div>
+      </details>
+      <div class="btn-row">
+        <button type="button" class="btn btn-primary btn-lg" id="auto-start">開始偵測</button>
+      </div>
+    </div>
+
+    <div class="card" id="auto-progress" hidden>
+      <p class="progress-title" id="auto-stage" role="status" aria-live="polite">準備中…</p>
+      <progress id="auto-bar" max="1" value="0"></progress>
+      <p class="hint" id="auto-detail"></p>
+      <div class="btn-row">
+        <button type="button" class="btn" id="auto-cancel">取消</button>
+      </div>
+    </div>
+
+    <div class="notice notice-warn" id="auto-error" role="alert" hidden></div>
+
+    <div id="auto-results" hidden>
+      <div class="view-head">
+        <h3 id="auto-summary"></h3>
+        <div class="btn-row">
+          <button type="button" class="btn" id="auto-rerun">重新偵測</button>
+          <button type="button" class="btn btn-primary" id="auto-accept-all">全部接受</button>
+        </div>
+      </div>
+      <p class="hint" id="auto-stats"></p>
+      <ol class="card-list" id="auto-cards"></ol>
+    </div>
+  </section>
+
+  <!-- ───────── 報告 ───────── -->
+  <section class="view" id="view-report" hidden>
+    <div class="view-head">
+      <h2>練投報告</h2>
+      <button type="button" class="btn" id="report-back">回去修改</button>
+    </div>
+    <div class="form-grid form-grid-2">
+      <label>球員姓名
+        <input type="text" id="report-player" maxlength="40" autocomplete="off" placeholder="選填">
+      </label>
+      <label>日期
+        <input type="date" id="report-date">
+      </label>
+    </div>
+    <div class="notice-list" id="report-notices"></div>
+
+    <div class="tiles" id="report-tiles"></div>
+
+    <div class="card">
+      <h3>每一球的入框角度</h3>
+      <div class="chart" id="report-chart"></div>
+    </div>
+
+    <div class="card" id="report-halves-card">
+      <h3>前半和後半</h3>
+      <div class="table-wrap"><table class="table" id="report-halves"></table></div>
+    </div>
+
+    <div class="card">
+      <h3>摘要</h3>
+      <div id="report-summary" class="summary"></div>
+    </div>
+
+    <details class="card" open>
+      <summary>每一球的數字</summary>
+      <div class="table-wrap"><table class="table" id="report-rows"></table></div>
+      <p class="hint" id="report-demo-note" hidden></p>
+    </details>
+
+    <div class="btn-row btn-row-wrap">
+      <button type="button" class="btn btn-primary" id="report-csv">匯出 CSV</button>
+      <button type="button" class="btn btn-primary" id="report-image">匯出報告圖片</button>
+      <button type="button" class="btn" id="report-bundle" hidden>匯出標註包（JSON）</button>
+      <button type="button" class="btn" id="report-history">歷次紀錄</button>
+    </div>
+    <p class="hint" id="report-saved" role="status" aria-live="polite"></p>
+    <details class="card card-inset" id="report-cli" hidden>
+      <summary>影片很長？用筆電的指令工具分析</summary>
+      <p class="hint">十分鐘以上的影片建議在筆電上跑 <code>tools/analyze.py</code>，用的是同一個模型和同一套邏輯。把下面這行貼到 PowerShell（先把影片路徑換成實際位置），輸出的 CSV 可以回到首頁用「匯入 CSV」看報告。</p>
+      <pre class="code" id="report-cli-cmd"></pre>
+      <button type="button" class="btn" id="report-cli-copy">複製指令</button>
+    </details>
+  </section>
+
+  <!-- ───────── 歷次紀錄 ───────── -->
+  <section class="view" id="view-history" hidden>
+    <div class="view-head">
+      <h2>歷次紀錄</h2>
+    </div>
+    <p class="hint">紀錄只存在這台裝置的這個瀏覽器裡。換手機或清除瀏覽資料前，請先匯出備份。</p>
+    <div class="notice-list" id="history-notices"></div>
+    <div class="form-grid form-grid-2" id="history-filter-wrap">
+      <label>球員
+        <select id="history-player"></select>
+      </label>
+    </div>
+    <div class="trend-grid" id="history-trends"></div>
+    <ol class="session-list" id="history-list"></ol>
+    <p class="empty" id="history-empty" hidden>還沒有任何紀錄。完成一次練習的報告後，會自動存在這裡。</p>
+    <div class="btn-row btn-row-wrap">
+      <button type="button" class="btn" id="history-export">匯出備份</button>
+      <label class="btn" for="file-backup">匯入備份</label>
+      <input class="visually-hidden" type="file" id="file-backup" accept=".json,application/json">
+      <button type="button" class="btn btn-danger" id="history-clear">清除全部</button>
+    </div>
+  </section>
+
+</main>
+
+<div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+
+<dialog class="dialog" id="dialog">
+  <form method="dialog">
+    <h3 id="dialog-title"></h3>
+    <p id="dialog-text"></p>
+    <div class="btn-row">
+      <button class="btn" value="cancel" id="dialog-cancel">取消</button>
+      <button class="btn btn-primary" value="ok" id="dialog-ok">確定</button>
+    </div>
+  </form>
+</dialog>
+
+<div class="chart-tip" id="chart-tip" hidden></div>
+
+<noscript><p class="notice notice-warn">ArcLog 需要開啟 JavaScript 才能使用。</p></noscript>
+<script type="module" src="js/ui/app.js"></script>
+</body>
+</html>

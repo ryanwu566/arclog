@@ -1,0 +1,60 @@
+# ── 資料與隱私：實拍影片、抽出的畫面、訓練輸出一律不進版控 ──
+# （詳見 docs/DATA.md。提交前請跑 python tools/check_staged.py）
+/data/
+/runs/
+/datasets/
+/weights/
+*.pt
+*.pth
+*.engine
+*.torchscript
+
+# 影片與畫面：預設全部忽略，只有下面明列的合成素材例外
+*.mp4
+*.mov
+*.MOV
+*.m4v
+*.avi
+*.mkv
+*.webm
+*.heic
+*.HEIC
+!/tests/fixtures/video/*.mp4
+!/tests/fixtures/video/*.mov
+
+# 標註包和分析結果：檔名常含人名或日期，內容對應到實拍影片
+*.arclog.json
+*.arclog-auto.json
+*.arclog.csv
+*.grid.png
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ipynb_checkpoints/
+*.egg-info/
+
+# Node（網站本身不需要 npm；只有開發測試用）
+node_modules/
+/test-results/
+/playwright-report/
+/blob-report/
+
+# 作業系統與編輯器
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
+
+# 金鑰與環境變數（Roboflow API key 只在 Colab 輸入欄位輸入，不可寫進 repo）
+.env
+.env.*
+*.key
+roboflow_key.txt
+
+# Vercel
+.vercel/
