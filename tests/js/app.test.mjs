@@ -502,3 +502,95 @@ test('CSV：匯出的角度永遠是小數一位，和報告顯示的一樣', ()
   const back = parseCsv(shotsToCsv(shots)).shots;
   assert.deepEqual(back, shots.map((x) => ({ angle: x.angle, made: x.made })));
 });
+
+// ── 自動模式 ──────────────────────────────────────────────────────────────
+import { displayName } from '../../web/js/ui/names.js';
+import { makeScene3d, scene3dTruth } from '../../web/js/core/synth3d.js';
+import { simulateDetections } from '../../web/js/core/simdetect.js';
+import { analyzeAuto } from '../../web/js/core/autoshots.js';
+import { readBarcode, drawBarcode } from '../../web/js/demo/scene3d.js';
+
+test('標題列的影片名稱：iPhone 的亂碼檔名換成「影片」加時間，太長的截短', () => {
+  const when = new Date(2026, 10, 14, 18, 5);
+  assert.equal(displayName({ name: 'IMG_4821.MOV' }, when), '影片 11/14 18:05');
+  assert.equal(displayName({ name: '6F9619FF-8B86-D011-B42D-00C04FC964FF.mov' }, when), '影片 11/14 18:05');
+  assert.equal(displayName({ name: 'trim.6F2A1C9B.MOV' }), '影片');
+  assert.equal(displayName({ name: '1114_A.mp4' }), '1114_A');
+  assert.equal(displayName({ name: '一段很長很長很長很長很長很長很長很長很長很長的練投影片名稱.mp4' }).length, 27);
+  assert.equal(displayName(null), '影片');
+});
+
+test('手動校正：點的位置明顯不合理時提醒（上下排列、高度差很多、點到地板、垂直線歪很多）', () => {
+  const s = S.createSession({ mode: 'video', info: { width: 1280, height: 720 } });
+  const warn = () => S.calibrationSanity(s).join('｜');
+  S.setHoopPoint(s, 'front', { x: 600, y: 300 });
+  S.setHoopPoint(s, 'back', { x: 690, y: 302 });
+  assert.equal(warn(), '');
+  S.setHoopPoint(s, 'back', { x: 610, y: 380 });
+  assert.match(warn(), /上下排列/);
+  S.setHoopPoint(s, 'back', { x: 690, y: 340 });
+  assert.match(warn(), /高度差/);
+  S.setHoopPoint(s, 'front', { x: 600, y: 650 });
+  S.setHoopPoint(s, 'back', { x: 690, y: 652 });
+  assert.match(warn(), /地板/);
+  S.setHoopPoint(s, 'front', { x: 600, y: 300 });
+  S.setHoopPoint(s, 'back', { x: 690, y: 302 });
+  S.setLevel(s, 'vertical');
+  S.setHoopPoint(s, 'top', { x: 760, y: 150 });
+  S.setHoopPoint(s, 'bottom', { x: 720, y: 330 });
+  assert.match(warn(), /歪了 \d+ 度/);
+  // hoopWarnings 也會帶出這些提醒
+  assert.ok(S.hoopWarnings(s).some((w) => /歪了/.test(w)));
+});
+
+test('幀號條碼：畫上去再讀回來（含縮放補邊成模型輸入大小）', () => {
+  const W = 1280;
+  const H = 720;
+  const rgba = new Uint8ClampedArray(W * H * 4).fill(128);
+  // 用最簡單的「畫布」：只實作 fillRect 和 fillStyle
+  const ctx = {
+    fillStyle: '#000',
+    save() {},
+    restore() {},
+    fillRect(x, y, w, h) {
+      const v = this.fillStyle === '#fff' ? 255 : 0;
+      for (let yy = Math.round(y); yy < Math.round(y + h); yy++) for (let xx = Math.round(x); xx < Math.round(x + w); xx++) {
+        const p = (yy * W + xx) * 4;
+        rgba[p] = rgba[p + 1] = rgba[p + 2] = v;
+      }
+    },
+  };
+  drawBarcode(ctx, 777, W, H);
+  assert.equal(readBarcode(rgba, W, H, W, H), 777);
+  assert.equal(readBarcode(new Uint8ClampedArray(W * H * 4).fill(200), W, H, W, H), null);
+});
+
+test('自動分析的結果放進這次練習：角度不因校正改變而重算；C 級的球沒有角度也照樣進報告和 CSV', () => {
+  const plan = makeScene3d({ seed: 4, camera: { thetaDeg: -90, dist: 9, camHeight: 1.6, pitchDeg: 3 } });
+  const res = analyzeAuto(simulateDetections(plan, { seed: 2 }), { width: plan.width, height: plan.height });
+  assert.equal(res.mode, 'count');
+  const s = S.createSession({ mode: 'demo', info: { width: plan.width, height: plan.height, perspective: true }, truth: scene3dTruth(plan) });
+  S.setAutoResult(s, res.shots.map((x, i) => ({ id: i + 1, source: 'auto', points: [], made: x.made, angle: null, auto: { mode: res.mode, tCross: x.tCross } })), { grade: 'C', mode: 'count' }, res.points);
+  const rs = S.reportShots(s);
+  assert.equal(rs.length, res.shots.length);
+  assert.ok(rs.every((x) => x.angle === null));
+  const truth = S.truthForShots(s);
+  assert.ok(truth.filter(Boolean).length >= rs.length - 1, '用過框時間對到真實答案');
+  const report = buildReport({ shots: rs, truth });
+  assert.equal(report.stats.angleMean, null);
+  assert.ok(report.stats.attempts >= 9);
+  const csv = shotsToCsv(rs);
+  assert.match(csv, /^1,,/m);
+  assert.deepEqual(parseCsv(csv).shots, rs.map((x) => ({ angle: null, made: x.made })));
+  // 校正改了：自動分析的球不重算
+  S.setHoopPoint(s, 'front', { x: 100, y: 100 });
+  assert.ok(S.reportShots(s).every((x) => x.angle === null));
+  // 草稿存起來再還原，自動結果還在
+  const d = S.serializeDraft(s);
+  const s2 = S.createSession({ mode: 'demo', info: s.info });
+  S.restoreDraft(s2, JSON.parse(JSON.stringify(d)));
+  assert.equal(s2.shots.length, s.shots.length);
+  assert.equal(s2.auto.grade, 'C');
+  // 歷次紀錄接受沒有角度的球
+  assert.ok(H.normalizeRecord({ id: 'x', shots: [{ angle: null, made: true }, { angle: 44.5, made: false }] }));
+});

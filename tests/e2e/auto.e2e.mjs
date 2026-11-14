@@ -28,6 +28,7 @@ async function openDemoAtAuto(path = '/index.html', opts = {}) {
   const errors = collectErrors(page);
   if (opts.route) await opts.route(page);
   await gotoApp(page, server.url + path);
+  await page.click('#home-advanced summary');
   await page.click('#btn-demo');
   await page.waitForSelector('#view-work:not([hidden])');
   await page.click('#cal-demo');
@@ -217,6 +218,7 @@ test('沒有校正就不能自動偵測；壞掉的 ONNX 檔會顯示錯誤', as
   const context = await browser.newContext({ viewport: { width: 1280, height: 860 } });
   const page = await context.newPage();
   await gotoApp(page, server.url + '/index.html');
+  await page.click('#home-advanced summary');
   await page.click('#btn-demo');
   await page.waitForSelector('#view-work:not([hidden])');
   // 還沒校正：進不了標記，也就按不到自動偵測

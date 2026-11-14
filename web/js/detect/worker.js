@@ -3,16 +3,16 @@
 //
 // 訊息（主畫面 → Worker）
 //   { type: 'init', backend: 'webgpu'|'wasm', modelUrl | modelBuffer, input?: {width, height},
-//     classIndex?, conf, iou, maxDet, threads }
+//     classIndex?, classes?: {ball, rim?, backboard?}, conf, iou, maxDet, threads }
 //   { type: 'detect', id, buffer（已縮放補邊成模型輸入大小的 RGBA）, lb（letterbox 參數）}
 //   { type: 'dispose' }
 // 訊息（Worker → 主畫面）
 //   { type: 'progress', stage: 'runtime'|'download'|'session'|'warmup', loaded?, total? }
 //   { type: 'ready', backend, input, outputDims, classIndex, numClasses, warmupMs, threads }
-//   { type: 'result', id, dets, ms }
+//   { type: 'result', id, dets, ms }      dets 的每一筆都有 cls（'ball'／'rim'／'backboard'）
 //   { type: 'error', id, stage, message }
 
-import { decodeDetections, rgbaToChw } from '../core/yolo.js';
+import { decodeDetections, decodeMulti, rgbaToChw } from '../core/yolo.js';
 
 const VENDOR = new URL('../../vendor/ort-1.31.1/', import.meta.url).href;
 
@@ -24,6 +24,7 @@ let inH = 0;
 let chw = null;
 let cfg = null;
 let classIndex = 0;
+let classes = null; // 多類別模型：{ball, rim, backboard} → 類別編號；沒有就只找球
 
 const post = (msg, transfer) => self.postMessage(msg, transfer || []);
 
@@ -114,6 +115,14 @@ async function init(m) {
   if (!oneToOne && (numClasses < 1 || classIndex >= numClasses)) {
     throw new Error(`模型只有 ${numClasses} 個類別，找不到類別 ${classIndex}`);
   }
+  classes = null;
+  if (m.classes && typeof m.classes === 'object') {
+    classes = {};
+    for (const [name, idx] of Object.entries(m.classes)) {
+      if (oneToOne || (Number.isInteger(idx) && idx >= 0 && idx < numClasses)) classes[name] = idx;
+    }
+    if (classes.ball == null) classes.ball = classIndex;
+  }
   post({
     type: 'ready',
     backend: m.backend,
@@ -121,6 +130,7 @@ async function init(m) {
     outputDims: out.dims,
     classIndex,
     numClasses,
+    classes: classes || { ball: classIndex },
     warmupMs,
     threads: ort.env.wasm.numThreads,
   });
@@ -130,13 +140,9 @@ async function detect(m) {
   const t0 = performance.now();
   rgbaToChw(new Uint8ClampedArray(m.buffer), inW, inH, chw);
   const out = await run(chw);
-  const dets = decodeDetections(out.data, out.dims, {
-    classIndex,
-    conf: cfg.conf,
-    iou: cfg.iou,
-    maxDet: cfg.maxDet,
-    lb: m.lb,
-  });
+  const dets = classes
+    ? decodeMulti(out.data, out.dims, { classes, conf: cfg.conf, iou: cfg.iou, maxDet: { ball: cfg.maxDet }, lb: m.lb })
+    : decodeDetections(out.data, out.dims, { classIndex, conf: cfg.conf, iou: cfg.iou, maxDet: cfg.maxDet, lb: m.lb }).map((d) => ({ cls: 'ball', ...d }));
   post({ type: 'result', id: m.id, dets, ms: performance.now() - t0 });
 }
 

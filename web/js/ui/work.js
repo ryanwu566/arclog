@@ -34,6 +34,7 @@ export function createWork(app) {
 
   let session = null;
   let source = null;
+  let tapsFor = null; // 'auto'：自動分析請使用者點兩下籃框
   let step = 'calibrate';
   let index = 0; // 畫面上目前這一幀
   let target = 0; // 最後一次要求的幀（連按時用它累加）
@@ -521,7 +522,16 @@ export function createWork(app) {
 
   // ── 按鈕 ──
   for (const b of $$('.step')) b.addEventListener('click', () => setStep(b.dataset.step));
-  $('#cal-done').addEventListener('click', () => setStep('mark'));
+  $('#cal-done').addEventListener('click', () => {
+    // 自動分析請使用者點兩下籃框：點好了就把兩點交回去，不進入手動標記
+    if (tapsFor === 'auto' && app.pendingTaps) {
+      const p = app.pendingTaps;
+      app.pendingTaps = null;
+      p.resolve({ front: { ...session.hoopPoints.front }, back: { ...session.hoopPoints.back } });
+      return;
+    }
+    setStep('mark');
+  });
   $('#cal-reset').addEventListener('click', () => {
     S.resetHoop(session);
     changed();
@@ -600,6 +610,9 @@ export function createWork(app) {
     open(nextSession, nextSource, opts = {}) {
       session = nextSession;
       source = nextSource;
+      tapsFor = opts.tapsFor || null;
+      $('#cal-done').textContent = tapsFor === 'auto' ? '繼續自動分析' : '下一步：標記';
+      show($('.steps'), tapsFor !== 'auto');
       index = target = 0;
       draftMade = null;
       selectedShot = null;
@@ -620,6 +633,10 @@ export function createWork(app) {
       const warn = $('#work-warnings');
       clear(warn);
       for (const w of source.warnings || []) warn.append(el('div', { class: 'notice', text: w }));
+      if (opts.message) warn.append(el('div', { class: 'notice notice-warn', text: opts.message }));
+      if (!tapsFor && session.auto && session.auto.grade && session.auto.grade !== 'A') {
+        warn.append(el('div', { class: 'notice notice-warn', text: '這段影片的鏡頭不在側面附近。手動標記是假設從側面拍的，重新標的球角度可能不準。' }));
+      }
       if (source.width < source.height) warn.append(el('div', { class: 'notice notice-warn', text: '這支影片是直的。建議橫向拍攝，球和籃框在畫面上會比較大、角度比較準。' }));
       step = opts.step === 'mark' && S.hoopFrame(session) ? 'mark' : 'calibrate';
       setStep(step);
@@ -628,6 +645,13 @@ export function createWork(app) {
     close() {
       session = null;
       source = null;
+      tapsFor = null;
+    },
+    /** 自動分析的點兩下結束：把畫面還原成一般的手動標記。 */
+    endTaps() {
+      tapsFor = null;
+      $('#cal-done').textContent = '下一步：標記';
+      show($('.steps'), true);
     },
     /** 從別的畫面回來時重畫（例如自動偵測加了球）。 */
     refresh(opts = {}) {

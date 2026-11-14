@@ -112,14 +112,22 @@ export function judgeAfter(shot, after, motion, o = JUDGE_DEFAULTS) {
   // 碰框後在框上彈跳、滾動（過框後還在籃框以上好幾幀）：看它最後從哪裡掉下去——
   // 從籃框裡面掉下去是滾進，從外面掉下去是滾出
   if (ev.above >= 3) {
-    let tA = -Infinity;
-    for (const p of after) if (p.t > shot.tCross && p.t <= shot.tCross + o.rollWindow && p.v >= o.bounceV && Math.abs(flipU(p.u) - 0.5) <= o.bounceRangeU) tA = Math.max(tA, p.t);
+    // 球最後一次在框上的時間：從過框開始，一個接一個（間隔不超過 0.3 秒）的「在籃框以上」的點，
+    // 零星的誤偵測或之後別的球不會把這個時間往後拉
+    let tA = shot.tCross;
+    for (const p of after) {
+      if (!(p.t > shot.tCross && p.t <= shot.tCross + o.rollWindow)) continue;
+      if (p.v >= o.bounceV && Math.abs(flipU(p.u) - 0.5) <= o.bounceRangeU && p.t - tA <= 0.3) tA = p.t;
+    }
     let inside = 0;
     let outside = 0;
+    // 從籃框裡面掉下去：球心離籃框中心不到 0.35 個內徑（內半徑 0.5 減掉球半徑約 0.27，再留一點偵測誤差），
+    // 而且已經在籃框平面下面；離中心超過 0.5 個內徑就是從框外掉下去
     for (const p of after) {
-      if (!(p.t > tA && p.t <= tA + 0.6 && p.v < -0.3 && p.v > o.lowV)) continue;
-      if (Math.abs(flipU(p.u) - 0.5) <= 0.6) inside++;
-      else outside++;
+      if (!(p.t > tA && p.t <= tA + 0.6 && p.v < -0.5 && p.v > o.lowV)) continue;
+      const d = Math.abs(flipU(p.u) - 0.5);
+      if (d <= 0.35) inside++;
+      else if (d > 0.5) outside++;
     }
     ev.dropIn = inside;
     ev.dropOut = outside;

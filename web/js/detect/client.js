@@ -89,6 +89,7 @@ export async function createDetector(o) {
       init.modelUrl = `${MODELS_BASE}${o.model.file}${v}`;
       init.input = o.model.input;
       init.classIndex = o.model.classIndex;
+      if (o.model.classes) init.classes = o.model.classes;
     }
     try {
       const { worker, info } = await startWorker(init, (p) => onProgress({ ...p, backend }), backend === 'webgpu' ? 45000 : 120000);
@@ -132,6 +133,8 @@ function wrap(worker, info, attempts) {
     backend: info.backend,
     input: info.input,
     info,
+    /** 這個模型找得到哪些類別（沒有 rim 的模型，自動校正要請使用者點兩下籃框）。 */
+    classes: info.classes || { ball: info.classIndex },
     attempts,
     /** 目前還在等結果的幀數（用來控制送畫面的速度）。 */
     get pending() {

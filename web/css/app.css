@@ -63,8 +63,9 @@ code { font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; font-siz
   backdrop-filter: blur(8px);
   border-bottom: 1px solid var(--line);
 }
-.brand { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
-.brand-name { font-weight: 700; font-size: 1.1rem; letter-spacing: 0.01em; }
+/* 標題不可以被擠成兩行（窄螢幕時 body 的 overflow-wrap:anywhere 會把 ArcLog 拆開）；太窄時先藏副標 */
+.brand { display: flex; align-items: baseline; gap: 8px; min-width: 0; flex: none; }
+.brand-name { font-weight: 700; font-size: 1.1rem; letter-spacing: 0.01em; white-space: nowrap; overflow-wrap: normal; }
 .brand-sub { color: var(--ink-2); font-size: 0.9rem; white-space: nowrap; }
 .topbar-title {
   margin-left: auto; min-width: 0; max-width: 55%;
@@ -81,7 +82,7 @@ code { font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; font-siz
 .banner { padding: 8px 16px; font-size: 0.9rem; text-align: center; }
 .banner-demo { background: #2b2f36; color: #ffffff; }
 
-main { max-width: 1120px; margin: 0 auto; padding: 16px max(16px, env(safe-area-inset-right)) 48px max(16px, env(safe-area-inset-left)); }
+main { max-width: 1120px; margin: 0 auto; padding: 16px max(16px, env(safe-area-inset-right)) calc(48px + env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left)); }
 .view { display: grid; gap: var(--gap); min-width: 0; }
 .view > * { min-width: 0; }
 .view-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
@@ -161,6 +162,7 @@ details[open] > summary { margin-bottom: 8px; }
 .stage {
   --ar: 1.7778;      /* 影片的寬 ÷ 高，由程式設定 */
   --stage-max-h: 70vh;
+  --stage-max-h: 62svh; /* iPhone Safari：用「網址列和工具列都顯示時」的高度，放大縮小按鈕才不會被工具列蓋住 */
   position: relative;
   width: min(100%, calc(var(--stage-max-h) * var(--ar)));
   margin-inline: auto;
@@ -179,7 +181,7 @@ details[open] > summary { margin-bottom: 8px; }
   position: absolute; inset: auto 8px 8px 8px; max-width: 70%;
   padding: 6px 10px; border-radius: 8px; background: rgba(20,22,21,0.78); color: #fff; font-size: 0.85rem;
 }
-.transport { display: grid; gap: 8px; }
+.transport { display: grid; gap: 8px; padding-bottom: max(8px, env(safe-area-inset-bottom)); }
 .scrub-wrap { position: relative; padding-top: 8px; }
 .scrub-marks { position: absolute; left: 10px; right: 10px; top: 0; height: 6px; pointer-events: none; }
 .scrub-marks i { position: absolute; top: 0; height: 6px; min-width: 3px; border-radius: 3px; background: var(--make); opacity: 0.85; }
@@ -328,10 +330,96 @@ progress { width: 100%; height: 14px; accent-color: var(--accent); }
   main { padding-top: 8px; }
   .topbar { min-height: 44px; position: static; }
   .work-grid { grid-template-columns: minmax(0, 1.5fr) minmax(240px, 1fr); align-items: start; }
-  .stage { --stage-max-h: calc(100vh - 150px); }
+  .stage { --stage-max-h: calc(100vh - 150px); --stage-max-h: calc(100svh - 150px); }
   .steps { display: none; }
   .howto { display: none; }
 }
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; animation: none !important; }
 }
+
+/* ── 窄螢幕的標題列 ── */
+@media (max-width: 400px) {
+  .brand-sub { display: none; }
+}
+
+/* ── 錄影 ── */
+.view-capture { gap: 12px; }
+.capture-stage {
+  position: relative; width: 100%; aspect-ratio: 16 / 9; max-height: 72svh; margin-inline: auto;
+  background: #000; border-radius: var(--radius); overflow: hidden;
+}
+#capture-video, .capture-overlay, .capture-guide { position: absolute; inset: 0; width: 100%; height: 100%; }
+#capture-video { object-fit: contain; background: #000; }
+.capture-overlay { pointer-events: none; }
+.capture-guide { pointer-events: none; }
+.capture-guide rect { fill: none; stroke: rgba(255,255,255,0.9); stroke-width: 0.6; stroke-dasharray: 2 1.5; vector-effect: non-scaling-stroke; }
+.capture-guide .guide-hoop { stroke: #ffd84a; }
+.capture-guide text { fill: #fff; font-size: 3.6px; paint-order: stroke; stroke: rgba(0,0,0,0.7); stroke-width: 0.8px; }
+.capture-stage.recording .capture-guide { opacity: 0.25; }
+.capture-rotate {
+  position: absolute; inset: 0; display: grid; place-items: center; padding: 16px; text-align: center;
+  background: rgba(0,0,0,0.78); color: #fff; font-weight: 600; font-size: 1.1rem;
+}
+.capture-hud { position: absolute; left: 8px; top: 8px; display: flex; gap: 6px; flex-wrap: wrap; }
+.hud-chip { padding: 4px 10px; border-radius: 999px; background: rgba(20,22,21,0.78); color: #fff; font-size: 0.85rem; font-variant-numeric: tabular-nums; }
+.hud-rec { color: #ffb4a8; }
+.capture-panel { display: grid; gap: 10px; padding-bottom: env(safe-area-inset-bottom); }
+.check-list { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 6px; }
+.check-list li { display: flex; gap: 6px; align-items: baseline; padding: 8px 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--card); font-size: 0.92rem; min-width: 0; }
+.check-list li::before { content: "…"; font-weight: 700; color: var(--muted); flex: none; }
+.check-list li[data-state="ok"]::before { content: "✓"; color: #1d7a3a; }
+.check-list li[data-state="warn"]::before { content: "!"; color: #9a6a00; }
+.check-list li[data-state="bad"]::before { content: "✕"; color: var(--danger); }
+.chk-label { font-weight: 600; flex: none; }
+.chk-text { color: var(--ink-2); min-width: 0; }
+.btn-stop { background: var(--danger); border-color: var(--danger); color: #fff; }
+
+/* ── 報告：結論 ── */
+.conclusion { display: grid; gap: 10px; }
+.conclusion-main { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
+.big-stat { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px 14px; min-width: 0; }
+.big-stat .label { color: var(--muted); font-size: 0.85rem; }
+.big-stat .value { font-size: clamp(1.7rem, 8vw, 2.4rem); font-weight: 700; line-height: 1.15; font-variant-numeric: tabular-nums; }
+.big-stat .sub { color: var(--ink-2); font-size: 0.85rem; }
+.big-stat .rough { font-size: 0.8rem; font-weight: 600; color: #9a6a00; margin-left: 4px; }
+.conclusion-line { margin: 0; font-weight: 600; }
+.grade-badge { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 0.82rem; font-weight: 700; margin-right: 6px; }
+.grade-A { background: #e3f3e8; color: #1d5d32; }
+.grade-B { background: var(--warn-bg); color: #7a5600; }
+.grade-C, .grade-unknown { background: #fbe6e3; color: #8a2a20; }
+.shot-cards { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.shot-card { border: 1px solid var(--line); border-radius: 10px; background: var(--card); }
+.shot-card > button.shot-row {
+  width: 100%; display: grid; grid-template-columns: 2.4em 1fr auto; align-items: center; gap: 8px;
+  min-height: 48px; padding: 6px 12px; border: 0; background: transparent; font: inherit; text-align: left; cursor: pointer;
+}
+.shot-card .shot-angle { font-weight: 700; font-variant-numeric: tabular-nums; }
+.shot-card .shot-flag { color: #9a6a00; font-size: 0.82rem; }
+.shot-detail { padding: 0 12px 12px; display: grid; gap: 8px; }
+.shot-detail canvas { width: 100%; height: auto; border-radius: 8px; background: var(--stage); }
+
+/* ── 手動校正的示意圖 ── */
+.cal-diagram { margin: 0; display: grid; gap: 6px; }
+.cal-diagram svg { width: 100%; max-width: 420px; height: auto; border-radius: 8px; border: 1px solid var(--line); }
+.cal-diagram figcaption { color: var(--ink-2); font-size: 0.9rem; }
+.big-stat.small .value { font-size: clamp(1.25rem, 5.6vw, 1.8rem); white-space: nowrap; }
+
+/* 錄影畫面：框和影片一樣是 16:9（引導框才會疊在影片上，不會跑到黑邊）；橫拿手機時影片和按鈕左右並排，不用捲動 */
+.capture-stage { width: min(100%, calc(72svh * 16 / 9)); max-height: none; }
+.btn-stop:hover { background: #8f1d17; border-color: #8f1d17; }
+@media (orientation: landscape) and (max-height: 560px) {
+  body:has(#view-capture:not([hidden])) .topbar { display: none; }
+  body:has(#view-capture:not([hidden])) main { padding-top: max(8px, env(safe-area-inset-top)); padding-bottom: max(8px, env(safe-area-inset-bottom)); }
+  .view-capture { grid-template-columns: minmax(0, 1fr) minmax(190px, 30%); align-items: start; gap: 10px; }
+  .capture-stage { width: min(100%, calc((100svh - 24px) * 16 / 9)); }
+  .check-list { grid-template-columns: 1fr; }
+  .check-list li { padding: 4px 8px; font-size: 0.85rem; }
+  .capture-panel .hint { font-size: 0.85rem; margin: 0; }
+  .capture-panel .btn-lg { min-height: 48px; }
+}
+.check-list li { flex-wrap: wrap; }
+.check-list .chk-text { flex: 1 1 100%; font-size: 0.88rem; }
+.check-list .chk-text:empty { display: none; }
+/* 錄影中：預檢清單已經用不到了，收起來讓停止鍵不用捲動就按得到 */
+.view-capture.recording .check-list { display: none; }

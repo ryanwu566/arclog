@@ -3,6 +3,9 @@
 // 網址參數（測試與除錯用）
 //   ?engine=video   強制用 <video> 退路引擎
 //   ?backend=wasm   自動偵測不使用 WebGPU
+//   ?model=<id>     自動分析用 models/manifest.json 裡的哪個模型
+//   ?simdet=0       示範的合成畫面也用真的模型（預設用模擬偵測器）
+//   ?fakecam=...    瀏覽器測試用：假相機播的是哪一段合成畫面（見 capture.js）
 
 import { $, el, clear, show, toast, confirmDialog, readFileText } from './dom.js';
 import * as S from './session.js';
@@ -10,12 +13,18 @@ import { createWork } from './work.js';
 import { createAuto } from './auto.js';
 import { createReportView } from './report-view.js';
 import { createHistoryView } from './history-view.js';
+import { createAutoFlow } from './autoflow.js';
+import { createCapture } from './capture.js';
 import { loadDraft, clearDraft } from './storage.js';
+import { listRecordings, deleteRecording } from './recstore.js';
 import { openVideoFile } from '../media/open.js';
 import { createSyntheticSource } from '../media/synth-source.js';
+import { createSynthetic3dSource } from '../media/synth3d-source.js';
 import { parseCsv } from '../core/csv.js';
+import { displayName } from './names.js';
 
-const VIEWS = ['home', 'work', 'auto', 'report', 'history'];
+const VIEWS = ['home', 'work', 'auto', 'analyze', 'capture', 'report', 'history'];
+
 const params = new URLSearchParams(location.search);
 
 const app = {
@@ -28,12 +37,18 @@ const app = {
   go(view, opts = {}) {
     if (!VIEWS.includes(view)) return;
     if ((view === 'work' || view === 'auto') && !app.source) view = 'home';
+    if (app.view === 'capture' && view !== 'capture') capture.leave();
+    if (app.pendingTaps && view !== 'work') {
+      const p = app.pendingTaps;
+      app.pendingTaps = null;
+      p.resolve(null);
+    }
     if (view === 'report' && !app.session) view = 'home';
     app.view = view;
     for (const v of VIEWS) show($(`#view-${v}`), v === view);
     show($('#nav-home'), view !== 'home');
     show($('#demo-banner'), !!app.session && app.session.mode === 'demo' && view !== 'home' && view !== 'history');
-    $('#topbar-title').textContent = view === 'home' || view === 'history' || !app.session ? '' : app.session.mode === 'demo' ? '合成示範' : (app.session.info && app.session.info.name) || app.session.videoName || '';
+    $('#topbar-title').textContent = view === 'home' || view === 'history' || view === 'capture' || !app.session ? '' : app.session.mode === 'demo' ? '合成示範' : app.session.displayName || displayName(app.session.info || { name: app.session.videoName });
     window.scrollTo(0, 0);
 
     if (view === 'work') {
@@ -42,7 +57,38 @@ const app = {
     } else if (view === 'auto') auto.enter(app.session, app.source);
     else if (view === 'report') report.enter(app.session, app.source, { notices: opts.notices });
     else if (view === 'history') history.enter();
-    else if (view === 'home') closeSource();
+    else if (view === 'home') {
+      closeSource();
+      refreshPending();
+    }
+  },
+
+  /** 改用手動標記（自動分析失敗，或使用者想自己標）。 */
+  async openManual(session, source) {
+    if (!source) return;
+    app.source = source;
+    app.session = session;
+    await app.work.open(session, source, { step: 'calibrate' });
+    app.go('work');
+  },
+
+  /**
+   * 請使用者在畫面上點兩下籃框（模型沒有籃框類別，或自動找不到籃框）。
+   * 用手動校正的畫面，按「繼續自動分析」時把兩點交回來；使用者離開就回傳 null。
+   */
+  async askHoopTaps(session, source, message) {
+    app.source = source;
+    app.session = session;
+    await app.work.open(session, source, { step: 'calibrate', tapsFor: 'auto', message });
+    app.go('work');
+    return new Promise((resolve) => {
+      app.pendingTaps = {
+        resolve: (pts) => {
+          app.work.endTaps();
+          resolve(pts);
+        },
+      };
+    });
   },
 
   onSessionChanged() {
@@ -68,6 +114,10 @@ app.work = createWork(app);
 const auto = createAuto(app);
 const report = createReportView(app);
 const history = createHistoryView(app);
+const autoflow = createAutoFlow(app);
+const capture = createCapture(app);
+app.autoflow = autoflow;
+app.capture = capture;
 
 function closeSource() {
   if (app.source) {
@@ -81,6 +131,36 @@ function closeSource() {
   app.session = null;
   app.work.close();
   auto.reset();
+  autoflow.cancel();
+}
+
+/** 首頁：有沒有還沒分析完的錄影（分析失敗、頁面當掉時影片還在這台裝置上）。 */
+async function refreshPending() {
+  const box = $('#home-pending');
+  let list = [];
+  try {
+    list = await listRecordings();
+  } catch {
+    list = [];
+  }
+  // 分析完成的錄影：回到首頁就刪掉（報告和紀錄已經存好了；影片只是給那次報告的疊圖用）
+  for (const r of list.filter((x) => x.status === 'done')) deleteRecording(r.id).catch(() => {});
+  // 正在錄的那一段不算（另一個分頁可能正在錄）：超過 10 分鐘還是 recording 的才當成中斷的錄影
+  const pending = list.filter((r) => r.status === 'recorded' || r.status === 'failed' || (r.status === 'recording' && Date.now() - Date.parse(r.createdAt) > 10 * 60 * 1000));
+  clear(box);
+  show(box, pending.length > 0);
+  if (!pending.length) return;
+  const r = pending[0];
+  box.append(
+    el('p', { text: `這台裝置上有 ${pending.length} 段錄影還沒分析完（最近一段：${new Date(r.createdAt).toLocaleString()}，約 ${Math.round(r.seconds || 0)} 秒）。影片沒有遺失。` }),
+    el(
+      'div',
+      { class: 'btn-row' },
+      el('button', { type: 'button', class: 'btn btn-primary', text: '重新分析', onclick: () => capture.reanalyze(r.id) }),
+      el('button', { type: 'button', class: 'btn', text: '下載影片', onclick: () => capture.download(r.id) }),
+      el('button', { type: 'button', class: 'btn btn-danger', text: '刪除', onclick: () => capture.remove(r.id).then(refreshPending) }),
+    ),
+  );
 }
 
 function setStatus(text) {
@@ -108,7 +188,45 @@ function infoOf(source) {
   };
 }
 
-// ── 載入影片 ──
+// ── 上傳影片：自動分析 ──
+async function openFile(file) {
+  setHomeError('');
+  setStatus(`正在開啟 ${file.name}…`);
+  closeSource();
+  try {
+    const engine = params.get('engine') === 'video' ? 'video' : params.get('engine') === 'codec' ? 'codec' : 'auto';
+    const source = await openVideoFile(file, { engine, onProgress: (t) => setStatus(`${file.name}：${t}`) });
+    setStatus('');
+    return source;
+  } catch (err) {
+    setStatus('');
+    setHomeError(err.message || String(err));
+    return null;
+  }
+}
+
+function sessionFor(source, file) {
+  const session = S.createSession({ mode: 'video', info: infoOf(source) });
+  if (file && file.lastModified) {
+    const d = new Date(file.lastModified);
+    if (!Number.isNaN(d.getTime())) {
+      session.date = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+      session.displayName = displayName(session.info, d);
+    }
+  }
+  return session;
+}
+
+async function uploadVideo(file) {
+  const source = await openFile(file);
+  if (!source) return;
+  const session = sessionFor(source, file);
+  app.source = source;
+  app.session = session;
+  await autoflow.run(source, session, { title: '分析影片' });
+}
+
+// ── 手動標記一支影片（原本的半自動流程）──
 async function loadVideo(file) {
   setHomeError('');
   setStatus(`正在開啟 ${file.name}…`);
@@ -151,8 +269,28 @@ async function loadVideo(file) {
 $('#file-video').addEventListener('change', (e) => {
   const file = e.target.files && e.target.files[0];
   e.target.value = '';
+  if (file) uploadVideo(file);
+});
+$('#file-video-manual').addEventListener('change', (e) => {
+  const file = e.target.files && e.target.files[0];
+  e.target.value = '';
   if (file) loadVideo(file);
 });
+
+// ── 示範（自動流程）──
+async function startDemoAuto() {
+  setHomeError('');
+  closeSource();
+  const source = createSynthetic3dSource({ view: $('#demo-view').value, background: $('#demo-background').checked });
+  const session = S.createSession({ mode: 'demo', info: { ...infoOf(source), perspective: true }, truth: source.truth });
+  session.level = 'persp';
+  app.source = source;
+  app.session = session;
+  await autoflow.run(source, session, { title: '分析示範影片' });
+}
+$('#btn-demo-auto').addEventListener('click', startDemoAuto);
+$('#btn-capture').addEventListener('click', () => capture.enter({}));
+$('#btn-demo-capture').addEventListener('click', () => capture.enter({ demo: { view: $('#demo-view').value, background: $('#demo-background').checked } }));
 
 // 也可以把影片拖進頁面
 document.addEventListener('dragover', (e) => {
@@ -164,7 +302,7 @@ document.addEventListener('drop', (e) => {
   const file = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
   if (!file) return;
   if (/\.csv$/i.test(file.name)) loadCsv(file);
-  else loadVideo(file);
+  else uploadVideo(file);
 });
 
 // ── 示範模式 ──
@@ -217,6 +355,10 @@ $('#btn-history').addEventListener('click', () => app.go('history'));
 
 // ── 左上角的返回 ──
 $('#nav-home').addEventListener('click', () => {
+  if (app.view === 'work' && app.pendingTaps) {
+    app.go('home');
+    return;
+  }
   if (app.view === 'auto') app.go('work', { step: 'mark' });
   else if (app.view === 'report' && app.source) app.go('work', { step: 'mark' });
   else if (app.view === 'report' && app.session && app.session.mode === 'history') app.go('history');

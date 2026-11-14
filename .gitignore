@@ -17,6 +17,7 @@
 *.avi
 *.mkv
 *.webm
+*.y4m
 *.heic
 *.HEIC
 !/tests/fixtures/video/*.mp4
