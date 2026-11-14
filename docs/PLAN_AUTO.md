@@ -187,4 +187,4 @@
   iPhone 介面修正（標題、檔名、safe area、svh）、手動校正示意圖和不合理點位的提醒。`tests/e2e/automode.e2e.mjs`、`tests/js/app.test.mjs`
 - [x] 階段 5：網站內錄影（引導框、預檢、邊錄邊偵測、IndexedDB 分段保存、補分析、中斷提醒）。
   Chrome 的假相機在手機尺寸跑完「開始練投 → 停止 → 報告」；**iPhone Safari 沒有實機測過**
-- [ ] 階段 6：文件、PR（提交之後才開 PR）
+- [x] 階段 6：README、拍攝指南、NEXT_STEPS、MODEL_CARD、EVAL 4.4 更新；PR #2（說明列出已驗證、未驗證、需要使用者做的事）
